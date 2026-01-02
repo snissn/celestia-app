@@ -293,6 +293,7 @@ func DefaultAppConfig() *serverconfig.Config {
 	cfg.API.Enable = false
 	cfg.GRPC.Enable = false
 	cfg.GRPCWeb.Enable = false
+	cfg.AppDBBackend = "treedb"
 
 	// the default snapshot interval was determined by picking a large enough
 	// value as to not dramatically increase resource requirements while also
