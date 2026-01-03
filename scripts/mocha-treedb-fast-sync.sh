@@ -19,9 +19,11 @@ LOCAL_RPC="http://127.0.0.1:27657"
 P2P_LADDR="tcp://0.0.0.0:27656"
 RPC_LADDR="tcp://127.0.0.1:27657"
 PPROF_LADDR="localhost:6061"
+DB_BACKEND="${DB_BACKEND:-treedb}"
+APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
 
 TS="$(date +%Y%m%d%H%M%S)"
-HOME_DIR="${HOME}/.celestia-app-mocha-treedb-${TS}"
+HOME_DIR="${HOME}/.celestia-app-mocha-${DB_BACKEND}-${TS}"
 LOG_DIR="${HOME_DIR}/sync"
 NODE_LOG="${LOG_DIR}/node.log"
 TIME_LOG="${LOG_DIR}/sync-time.log"
@@ -51,7 +53,7 @@ if [ -n "${NET_INFO_JSON}" ]; then
   fi
 fi
 
-export HOME_DIR SEEDS PEERS P2P_LADDR RPC_LADDR PPROF_LADDR
+export HOME_DIR SEEDS PEERS P2P_LADDR RPC_LADDR PPROF_LADDR DB_BACKEND
 python3 - <<'PY'
 import os
 import re
@@ -84,12 +86,39 @@ data, p2p_count = re.subn(
     f"laddr = \"{os.environ['P2P_LADDR']}\"",
     data,
 )
-if pprof_count == 0 or seeds_count == 0 or peers_count == 0 or rpc_count == 0 or p2p_count == 0:
+data, db_count = re.subn(
+    r"(?m)^db_backend\s*=.*$",
+    f"db_backend = \"{os.environ['DB_BACKEND']}\"",
+    data,
+)
+if (
+    pprof_count == 0
+    or seeds_count == 0
+    or peers_count == 0
+    or rpc_count == 0
+    or p2p_count == 0
+    or db_count == 0
+):
     raise SystemExit("Failed to update config.toml (ports/peers/seeds/pprof).")
 cfg_path.write_text(data)
 PY
-perl -pi -e 's/^db_backend.*/db_backend = "treedb"/' "${HOME_DIR}/config/config.toml"
-perl -pi -e 's/^app-db-backend.*/app-db-backend = "treedb"/' "${HOME_DIR}/config/app.toml"
+export HOME_DIR APP_DB_BACKEND
+python3 - <<'PY'
+import os
+import re
+from pathlib import Path
+
+app_path = Path(os.environ["HOME_DIR"]) / "config" / "app.toml"
+data = app_path.read_text()
+data, count = re.subn(
+    r"(?m)^app-db-backend\s*=.*$",
+    f"app-db-backend = \"{os.environ['APP_DB_BACKEND']}\"",
+    data,
+)
+if count == 0:
+    raise SystemExit("Failed to update app.toml (app-db-backend).")
+app_path.write_text(data)
+PY
 
 LATEST="$(curl -fsSL "${RPC1}/status" 2>/dev/null | jq -r .result.sync_info.latest_block_height || curl -fsSL "${RPC2}/status" 2>/dev/null | jq -r .result.sync_info.latest_block_height)"
 TRUST_HEIGHT=$((LATEST-2000))
@@ -126,6 +155,8 @@ START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "trust_height=${TRUST_HEIGHT}"
   echo "trust_hash=${TRUST_HASH}"
   echo "home=${HOME_DIR}"
+  echo "db_backend=${DB_BACKEND}"
+  echo "app_db_backend=${APP_DB_BACKEND}"
 } >> "${TIME_LOG}"
 
 echo "Starting node..."
