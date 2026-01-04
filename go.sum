@@ -1558,6 +1558,8 @@ github.com/smartystreets/assertions v0.0.0-20180927180507-b2de0cb4f26d/go.mod h1
 github.com/smartystreets/goconvey v1.6.4/go.mod h1:syvi0/a8iFYH4r/RixwvyeAJjdLS9QV7WQ/tjFTllLA=
 github.com/snissn/celestia-cosmos-sdk v0.0.0-20260102215433-110c536d5b47 h1:b2Sc1RSsJtppcjb/yoy+OHtKPRLtxWgilkxAahlads0=
 github.com/snissn/celestia-cosmos-sdk v0.0.0-20260102215433-110c536d5b47/go.mod h1:R7qYXdfbmrm5HL7+N7oc4XC6VvK9ofYz8l1gfRcWCDg=
+github.com/snissn/celestia-cosmos-sdk v0.0.0-20260104210302-2ec03bdb9336 h1:Ox5lyC2Gl0g7lir9Q8L1PCLMxROImAR0jzzDS/foJc4=
+github.com/snissn/celestia-cosmos-sdk v0.0.0-20260104210302-2ec03bdb9336/go.mod h1:1nPM8JztQ7IaGGz3ETYkWNaX82xMfMcIrhxE0U+hhj8=
 github.com/snissn/celestia-cosmos-sdk/api v0.0.0-20260102215433-110c536d5b47 h1:yuwwVXZVGPpLZ4KZ12xt0Ru67xyIIO2S8dBjYrhqmaU=
 github.com/snissn/celestia-cosmos-sdk/api v0.0.0-20260102215433-110c536d5b47/go.mod h1:PA2ulkeSqxakNcVKrpa3z3A54nVYwUmvMi75IlHRC+s=
 github.com/snissn/celestia-cosmos-sdk/log v0.0.0-20260102215433-110c536d5b47 h1:2vdPvCJMLUAVszLo0d/YRYXpXIAtHO80BMmExAjbd1I=

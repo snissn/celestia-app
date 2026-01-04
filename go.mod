@@ -269,13 +269,13 @@ require (
 )
 
 replace (
-	cosmossdk.io/api => github.com/snissn/celestia-cosmos-sdk/api v0.0.0-20260102215433-110c536d5b47
-	cosmossdk.io/log => github.com/snissn/celestia-cosmos-sdk/log v0.0.0-20260102215433-110c536d5b47
-	cosmossdk.io/x/upgrade => github.com/snissn/celestia-cosmos-sdk/x/upgrade v0.0.0-20260102215433-110c536d5b47
+	cosmossdk.io/api => github.com/snissn/celestia-cosmos-sdk/api v0.0.0-20260104210302-2ec03bdb9336
+	cosmossdk.io/log => github.com/snissn/celestia-cosmos-sdk/log v0.0.0-20260104210302-2ec03bdb9336
+	cosmossdk.io/x/upgrade => github.com/snissn/celestia-cosmos-sdk/x/upgrade v0.0.0-20260104210302-2ec03bdb9336
 	github.com/cometbft/cometbft => github.com/celestiaorg/celestia-core v0.39.20
 	github.com/cometbft/cometbft-db => github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615
 	github.com/cosmos/cosmos-db => github.com/snissn/cosmos-db v0.0.0-20260102185649-34d2db082a5f
-	github.com/cosmos/cosmos-sdk => github.com/snissn/celestia-cosmos-sdk v0.0.0-20260102215433-110c536d5b47
+	github.com/cosmos/cosmos-sdk => github.com/snissn/celestia-cosmos-sdk v0.0.0-20260104210302-2ec03bdb9336
 	github.com/cosmos/ibc-go/v8 => github.com/celestiaorg/ibc-go/v8 v8.7.2
 	// Use ledger-cosmos-go v0.16.0 because v0.15.0 causes "hidapi: unknown failure"
 	// See https://github.com/celestiaorg/celestia-app/issues/5453
