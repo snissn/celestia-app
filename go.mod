@@ -226,7 +226,7 @@ require (
 	github.com/rs/cors v1.11.1 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sasha-s/go-deadlock v0.3.6 // indirect
-	github.com/snissn/gomap v0.0.0-20251229170756-b69ad617e4ea // indirect
+	github.com/snissn/gomap v0.0.0-20260104224915-8ac67a0a8161 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
@@ -274,7 +274,7 @@ replace (
 	cosmossdk.io/x/upgrade => github.com/snissn/celestia-cosmos-sdk/x/upgrade v0.0.0-20260104225124-332d4ea47a9e
 	github.com/cometbft/cometbft => github.com/celestiaorg/celestia-core v0.39.20
 	github.com/cometbft/cometbft-db => github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615
-	github.com/cosmos/cosmos-db => github.com/snissn/cosmos-db v0.0.0-20260102185649-34d2db082a5f
+	github.com/cosmos/cosmos-db => github.com/snissn/cosmos-db v0.0.0-20260104225004-8d1af7f9df2e
 	github.com/cosmos/cosmos-sdk => github.com/snissn/celestia-cosmos-sdk v0.0.0-20260104225124-332d4ea47a9e
 	github.com/cosmos/ibc-go/v8 => github.com/celestiaorg/ibc-go/v8 v8.7.2
 	// Use ledger-cosmos-go v0.16.0 because v0.15.0 causes "hidapi: unknown failure"
