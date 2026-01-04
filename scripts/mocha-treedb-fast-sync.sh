@@ -21,6 +21,8 @@ RPC_LADDR="tcp://127.0.0.1:27657"
 PPROF_LADDR="localhost:6061"
 DB_BACKEND="${DB_BACKEND:-treedb}"
 APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
+TREEDB_TREEMAP_BIN="${TREEDB_TREEMAP_BIN:-treemap}"
+TREEDB_SYNC_MODE="${TREEDB_SYNC_MODE:-1}"
 
 TS="$(date +%Y%m%d%H%M%S)"
 HOME_DIR="${HOME}/.celestia-app-mocha-${DB_BACKEND}-${TS}"
@@ -53,7 +55,7 @@ if [ -n "${NET_INFO_JSON}" ]; then
   fi
 fi
 
-export HOME_DIR SEEDS PEERS P2P_LADDR RPC_LADDR PPROF_LADDR DB_BACKEND
+export HOME_DIR SEEDS PEERS P2P_LADDR RPC_LADDR PPROF_LADDR DB_BACKEND TREEDB_SYNC_MODE
 python3 - <<'PY'
 import os
 import re
@@ -157,6 +159,7 @@ START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "home=${HOME_DIR}"
   echo "db_backend=${DB_BACKEND}"
   echo "app_db_backend=${APP_DB_BACKEND}"
+  echo "treedb_sync_mode=${TREEDB_SYNC_MODE}"
 } >> "${TIME_LOG}"
 
 echo "Starting node..."
@@ -213,5 +216,20 @@ DURATION=$((END_EPOCH-START_EPOCH))
 echo "Caught up. Stopping node..."
 kill -INT "${NODE_PID}" >/dev/null 2>&1 || true
 wait "${NODE_PID}" >/dev/null 2>&1 || true
+
+if [ "${DB_BACKEND}" = "treedb" ] || [ "${APP_DB_BACKEND}" = "treedb" ]; then
+  if command -v "${TREEDB_TREEMAP_BIN}" >/dev/null 2>&1; then
+    echo "Running TreeDB index vacuum..."
+    VACUUM_LOG="${LOG_DIR}/treedb-vacuum.log"
+    for db_dir in "${HOME_DIR}/data/application.db" "${HOME_DIR}/data/state.db" "${HOME_DIR}/data/blockstore.db"; do
+      if [ -d "${db_dir}" ]; then
+        "${TREEDB_TREEMAP_BIN}" vacuum "${db_dir}" >>"${VACUUM_LOG}" 2>&1
+      fi
+    done
+    echo "Vacuum log: ${VACUUM_LOG}"
+  else
+    echo "treemap not found; skipping post-sync vacuum."
+  fi
+fi
 
 echo "Sync complete. Time log: ${TIME_LOG}"
