@@ -273,14 +273,15 @@ replace (
 	cosmossdk.io/log => github.com/snissn/celestia-cosmos-sdk/log v0.0.0-20260104225124-332d4ea47a9e
 	cosmossdk.io/x/upgrade => github.com/snissn/celestia-cosmos-sdk/x/upgrade v0.0.0-20260104225124-332d4ea47a9e
 	github.com/cometbft/cometbft => github.com/celestiaorg/celestia-core v0.39.20
-	github.com/cometbft/cometbft-db => github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615
-	github.com/cosmos/cosmos-db => github.com/snissn/cosmos-db v0.0.0-20260104225004-8d1af7f9df2e
+	github.com/cometbft/cometbft-db => /home/mikers/dev/snissn/cometbft-db
+	github.com/cosmos/cosmos-db => /home/mikers/dev/snissn/cosmos-db
 	github.com/cosmos/cosmos-sdk => github.com/snissn/celestia-cosmos-sdk v0.0.0-20260104225124-332d4ea47a9e
 	github.com/cosmos/ibc-go/v8 => github.com/celestiaorg/ibc-go/v8 v8.7.2
 	// Use ledger-cosmos-go v0.16.0 because v0.15.0 causes "hidapi: unknown failure"
 	// See https://github.com/celestiaorg/celestia-app/issues/5453
 	// This replace can be removed once celestiaorg/cosmos-sdk is updated to use ledger-cosmos-go v0.16.0.
 	github.com/cosmos/ledger-cosmos-go => github.com/cosmos/ledger-cosmos-go v0.16.0
+	github.com/snissn/gomap => /home/mikers/dev/snissn/gomap
 	// goleveldb: canonical version
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	// celestia-core(v0.34.x): used for multiplexing abci v1 requests

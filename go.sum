@@ -1568,8 +1568,6 @@ github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615 h1:NwN6+CYpnNIy
 github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615/go.mod h1:qihOcK9rYaNtLaMVy1IIVJdjwQkunW/18T5k8HONFGw=
 github.com/snissn/cosmos-db v0.0.0-20260104225004-8d1af7f9df2e h1:wO2qcYJpsNclrPoyPWcIHRrXYbwInKwNYxIVd2/Z9T8=
 github.com/snissn/cosmos-db v0.0.0-20260104225004-8d1af7f9df2e/go.mod h1:G8zVf1EEQKU3fPnAcyW+GgQ+DD5KcvJDE5V4uBsPo/I=
-github.com/snissn/gomap v0.0.0-20260104224915-8ac67a0a8161 h1:J4oWvUEC7Gzmoxy3HO36fQ45bU4iUpz+eR6UUPnNmtA=
-github.com/snissn/gomap v0.0.0-20260104224915-8ac67a0a8161/go.mod h1:ouXhmNCIGcgrXWAfjDqNlv1CWHXYswUHCF9siiFomzw=
 github.com/soheilhy/cmux v0.1.4/go.mod h1:IM3LyeVVIOuxMH7sFAkER9+bJ4dT7Ms6E4xg4kGIyLM=
 github.com/sony/gobreaker v0.4.1/go.mod h1:ZKptC7FHNvhBz7dN2LGjPVBz2sZJmc0/PkyDJOjmxWY=
 github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 h1:+jumHNA0Wrelhe64i8F6HNlS8pkoyMv5sreGx2Ry5Rw=
