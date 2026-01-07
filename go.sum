@@ -1564,10 +1564,6 @@ github.com/snissn/celestia-cosmos-sdk/log v0.0.0-20260104225124-332d4ea47a9e h1:
 github.com/snissn/celestia-cosmos-sdk/log v0.0.0-20260104225124-332d4ea47a9e/go.mod h1:lQTBplaW3HQLKQdPaQq+ElW6zASAoo9r3bJ7pOr8SWo=
 github.com/snissn/celestia-cosmos-sdk/x/upgrade v0.0.0-20260104225124-332d4ea47a9e h1:Dv1Cuw5yIag1aMCC5TAIPjlOa/k6sm4nN3r5nSRBbWA=
 github.com/snissn/celestia-cosmos-sdk/x/upgrade v0.0.0-20260104225124-332d4ea47a9e/go.mod h1:VNTmEqfjPRQb3r8aHTDBHoqSK1Xh5ctoucsSQAy7xM4=
-github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615 h1:NwN6+CYpnNIyXhuxMEphyS3HFryTG6esgkBtcvpize0=
-github.com/snissn/cometbft-db v0.0.0-20260102230234-c11ade9f2615/go.mod h1:qihOcK9rYaNtLaMVy1IIVJdjwQkunW/18T5k8HONFGw=
-github.com/snissn/cosmos-db v0.0.0-20260104225004-8d1af7f9df2e h1:wO2qcYJpsNclrPoyPWcIHRrXYbwInKwNYxIVd2/Z9T8=
-github.com/snissn/cosmos-db v0.0.0-20260104225004-8d1af7f9df2e/go.mod h1:G8zVf1EEQKU3fPnAcyW+GgQ+DD5KcvJDE5V4uBsPo/I=
 github.com/soheilhy/cmux v0.1.4/go.mod h1:IM3LyeVVIOuxMH7sFAkER9+bJ4dT7Ms6E4xg4kGIyLM=
 github.com/sony/gobreaker v0.4.1/go.mod h1:ZKptC7FHNvhBz7dN2LGjPVBz2sZJmc0/PkyDJOjmxWY=
 github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 h1:+jumHNA0Wrelhe64i8F6HNlS8pkoyMv5sreGx2Ry5Rw=
