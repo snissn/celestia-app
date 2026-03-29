@@ -106,6 +106,7 @@ POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 WAIT_RPC_TIMEOUT_SECONDS="${WAIT_RPC_TIMEOUT_SECONDS:-180}"
 NO_PROGRESS_WARN_SECONDS="${NO_PROGRESS_WARN_SECONDS:-60}"
 NO_PROGRESS_FAIL_SECONDS="${NO_PROGRESS_FAIL_SECONDS:-600}"
+ZERO_LOCAL_FAIL_SECONDS="${ZERO_LOCAL_FAIL_SECONDS:-0}"
 STUCK_REPORT_INTERVAL_SECONDS="${STUCK_REPORT_INTERVAL_SECONDS:-30}"
 MAX_LOCAL_RPC_FAILURES="${MAX_LOCAL_RPC_FAILURES:-6}"
 MAX_REMOTE_RPC_FAILURES="${MAX_REMOTE_RPC_FAILURES:-12}"
@@ -902,6 +903,10 @@ if [ -n "${STOP_AT_LOCAL_HEIGHT}" ] && ! is_non_negative_int "${STOP_AT_LOCAL_HE
   log_error "STOP_AT_LOCAL_HEIGHT must be a non-negative integer when set (got: ${STOP_AT_LOCAL_HEIGHT})."
   exit 1
 fi
+if ! is_non_negative_int "${ZERO_LOCAL_FAIL_SECONDS}"; then
+  log_error "ZERO_LOCAL_FAIL_SECONDS must be a non-negative integer (got: ${ZERO_LOCAL_FAIL_SECONDS})."
+  exit 1
+fi
 
 log_info "Bootstrap peers: persistent=$(count_peer_csv "${PEERS}") seeds=$(count_peer_csv "${SEEDS}") use_net_info_peers=${USE_NET_INFO_PEERS} use_seeds=${USE_SEEDS}"
 
@@ -1132,6 +1137,7 @@ HEAP_CAPTURE_COUNT=0
   echo "max_remote_height=${MAX_REMOTE_HEIGHT:-disabled}"
   echo "allow_clamped_target_early_exit=${ALLOW_CLAMPED_TARGET_EARLY_EXIT}"
   echo "stop_at_local_height=${STOP_AT_LOCAL_HEIGHT:-disabled}"
+  echo "zero_local_fail_seconds=${ZERO_LOCAL_FAIL_SECONDS}"
   echo "start_home_bytes=${START_HOME_BYTES}"
   echo "start_data_bytes=${START_DATA_BYTES}"
   echo "start_app_bytes=${START_APP_BYTES}"
@@ -1640,6 +1646,7 @@ REMOTE_RPC_FAILURES=0
 SYNC_COMPLETE=0
 ACTIVE_RESTORE_GRACE_USED=0
 STATESYNC_PPROF_CAPTURED=0
+ZERO_LOCAL_SINCE_EPOCH=0
 
 log_info "Monitoring sync progress..."
 while true; do
@@ -1674,6 +1681,11 @@ while true; do
     PREV_LOCAL_HEIGHT="${LOCAL_HEIGHT}"
     START_LOCAL_HEIGHT="${LOCAL_HEIGHT}"
     PROGRESS_EPOCH="$(date +%s)"
+  fi
+  if [ "${LOCAL_HEIGHT}" -gt 0 ]; then
+    ZERO_LOCAL_SINCE_EPOCH=0
+  elif [ "${ZERO_LOCAL_FAIL_SECONDS}" -gt 0 ] && [ "${ZERO_LOCAL_SINCE_EPOCH}" -eq 0 ]; then
+    ZERO_LOCAL_SINCE_EPOCH="$(date +%s)"
   fi
   if [ -n "${STOP_AT_LOCAL_HEIGHT}" ] && [ "${LOCAL_HEIGHT}" -ge "${STOP_AT_LOCAL_HEIGHT}" ]; then
     log_info "Reached explicit local-height stop target (stop_at_local_height=${STOP_AT_LOCAL_HEIGHT}, local=${LOCAL_HEIGHT}); treating as sync complete."
@@ -1763,6 +1775,16 @@ while true; do
   LAG=$((REMOTE_HEIGHT - LOCAL_HEIGHT))
   if [ "${LAG}" -lt 0 ]; then
     LAG=0
+  fi
+
+  if [ "${ZERO_LOCAL_FAIL_SECONDS}" -gt 0 ] && [ "${LOCAL_HEIGHT}" -le 0 ] && [ "${ZERO_LOCAL_SINCE_EPOCH}" -gt 0 ]; then
+    ZERO_LOCAL_FOR=$((NOW_EPOCH - ZERO_LOCAL_SINCE_EPOCH))
+    if [ "${ZERO_LOCAL_FOR}" -ge "${ZERO_LOCAL_FAIL_SECONDS}" ]; then
+      STAGE_SUMMARY="$(sync_stage_from_marker "${LAST_SYNC_MARKER}")"
+      log_error "Local height remained 0 for ${ZERO_LOCAL_FOR}s (threshold=${ZERO_LOCAL_FAIL_SECONDS}s, stage=${STAGE_SUMMARY}, remote=${REMOTE_HEIGHT}, cpu=${NODE_CPU:-n/a}%, rss=${RSS_KB:-n/a}k)."
+      capture_stuck_diagnostics "fail-zero-local" "${ZERO_LOCAL_FOR}" "${LOCAL_HEIGHT}" "${REMOTE_HEIGHT}" "${LAG}" "${CATCHING_UP}" "${NODE_CPU:-}" "${RSS_KB:-}" 1
+      fail_and_exit "Local height remained 0 for ${ZERO_LOCAL_FOR}s (treating as stuck)."
+    fi
   fi
 
   if [ "${LOCAL_HEIGHT}" -gt "${PREV_LOCAL_HEIGHT}" ]; then
