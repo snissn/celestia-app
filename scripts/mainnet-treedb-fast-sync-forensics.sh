@@ -111,6 +111,8 @@ MAX_LOCAL_RPC_FAILURES="${MAX_LOCAL_RPC_FAILURES:-6}"
 MAX_REMOTE_RPC_FAILURES="${MAX_REMOTE_RPC_FAILURES:-12}"
 LOG_ERROR_SCAN_LINES="${LOG_ERROR_SCAN_LINES:-300}"
 NO_PROGRESS_HARD_FAIL_SECONDS="${NO_PROGRESS_HARD_FAIL_SECONDS:-3600}"
+NODE_SHUTDOWN_INT_GRACE_SECONDS="${NODE_SHUTDOWN_INT_GRACE_SECONDS:-15}"
+NODE_SHUTDOWN_TERM_GRACE_SECONDS="${NODE_SHUTDOWN_TERM_GRACE_SECONDS:-15}"
 ACTIVE_RESTORE_CPU_THRESHOLD="${ACTIVE_RESTORE_CPU_THRESHOLD:-85}"
 ACTIVE_RESTORE_GRACE_SECONDS="${ACTIVE_RESTORE_GRACE_SECONDS:-900}"
 ACTIVE_RESTORE_APP_GROWTH_BYTES="${ACTIVE_RESTORE_APP_GROWTH_BYTES:-16777216}"
@@ -1262,11 +1264,53 @@ PY
   fi
 }
 
-cleanup_node() {
-  if [ -n "${NODE_PID:-}" ] && kill -0 "${NODE_PID}" >/dev/null 2>&1; then
-    kill -INT "${NODE_PID}" >/dev/null 2>&1 || true
-    wait "${NODE_PID}" >/dev/null 2>&1 || true
+stop_node_process() {
+  local reason="${1:-shutdown}"
+  if [ -z "${NODE_PID:-}" ]; then
+    return 0
   fi
+  if ! kill -0 "${NODE_PID}" >/dev/null 2>&1; then
+    wait "${NODE_PID}" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  local int_grace="${NODE_SHUTDOWN_INT_GRACE_SECONDS}"
+  local term_grace="${NODE_SHUTDOWN_TERM_GRACE_SECONDS}"
+  if ! is_non_negative_int "${int_grace}"; then
+    int_grace=15
+  fi
+  if ! is_non_negative_int "${term_grace}"; then
+    term_grace=15
+  fi
+
+  kill -INT "${NODE_PID}" >/dev/null 2>&1 || true
+  local i
+  for ((i = 0; i < int_grace; i++)); do
+    if ! kill -0 "${NODE_PID}" >/dev/null 2>&1; then
+      wait "${NODE_PID}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 1
+  done
+
+  log_warn "Node did not exit after SIGINT (${int_grace}s, reason=${reason}); escalating to SIGTERM."
+  kill -TERM "${NODE_PID}" >/dev/null 2>&1 || true
+  for ((i = 0; i < term_grace; i++)); do
+    if ! kill -0 "${NODE_PID}" >/dev/null 2>&1; then
+      wait "${NODE_PID}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 1
+  done
+
+  log_warn "Node did not exit after SIGTERM (${term_grace}s, reason=${reason}); escalating to SIGKILL."
+  kill -KILL "${NODE_PID}" >/dev/null 2>&1 || true
+  wait "${NODE_PID}" >/dev/null 2>&1 || true
+  return 0
+}
+
+cleanup_node() {
+  stop_node_process "exit-trap" || true
 }
 trap cleanup_node EXIT
 
@@ -1870,8 +1914,7 @@ END_BLOCKSTORE_BYTES="$(safe_du_bytes "${HOME_DIR}/data/blockstore.db")"
 
 log_info "Sync complete: local=${LOCAL_HEIGHT} remote=${REMOTE_HEIGHT}. Stopping node..."
 SHUTDOWN_START_EPOCH="$(date +%s)"
-kill -INT "${NODE_PID}" >/dev/null 2>&1 || true
-wait "${NODE_PID}" >/dev/null 2>&1 || true
+stop_node_process "sync-complete" || true
 SHUTDOWN_END_EPOCH="$(date +%s)"
 SHUTDOWN_DURATION=$((SHUTDOWN_END_EPOCH-SHUTDOWN_START_EPOCH))
 {
