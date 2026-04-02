@@ -51,6 +51,13 @@ BOOTSTRAP_RETRY_DELAY_SECONDS="${BOOTSTRAP_RETRY_DELAY_SECONDS:-1}"
 # - prefer_fallback (default): use the most recent local cached artifact first.
 # - remote_first: try remote fetch first, then fallback on failure.
 BOOTSTRAP_FETCH_MODE="${BOOTSTRAP_FETCH_MODE:-prefer_fallback}"
+# Fallback bootstrap source:
+# - config_only (default): seed genesis/peers/seeds from fallback when available.
+# - full_home: copy an entire cached run home before rewriting config/ports.
+BOOTSTRAP_FALLBACK_MODE="${BOOTSTRAP_FALLBACK_MODE:-config_only}"
+# Optional explicit cached run home. When set, use this exact home instead of
+# auto-selecting the most recent local fallback.
+BOOTSTRAP_FALLBACK_HOME="${BOOTSTRAP_FALLBACK_HOME:-}"
 BOOTSTRAP_CURL_OPTS=(
   --max-time "${BOOTSTRAP_MAX_TIME_SECONDS}"
   --connect-timeout "${BOOTSTRAP_CONNECT_TIMEOUT_SECONDS}"
@@ -614,14 +621,35 @@ if ! is_positive_int "${MAX_REMOTE_RPC_FAILURES}"; then
   log_error "MAX_REMOTE_RPC_FAILURES must be a positive integer (got: ${MAX_REMOTE_RPC_FAILURES})."
   exit 1
 fi
+if [ "${BOOTSTRAP_FETCH_MODE}" != "prefer_fallback" ] && [ "${BOOTSTRAP_FETCH_MODE}" != "remote_first" ]; then
+  log_error "BOOTSTRAP_FETCH_MODE must be prefer_fallback or remote_first (got: ${BOOTSTRAP_FETCH_MODE})."
+  exit 1
+fi
+if [ "${BOOTSTRAP_FALLBACK_MODE}" != "config_only" ] && [ "${BOOTSTRAP_FALLBACK_MODE}" != "full_home" ]; then
+  log_error "BOOTSTRAP_FALLBACK_MODE must be config_only or full_home (got: ${BOOTSTRAP_FALLBACK_MODE})."
+  exit 1
+fi
 
 fallback_home=""
-while IFS= read -r dir; do
-  if [ -f "${dir}/config/genesis.json" ]; then
-    fallback_home="${dir}"
-    break
+if [ -n "${BOOTSTRAP_FALLBACK_HOME}" ]; then
+  if [ -f "${BOOTSTRAP_FALLBACK_HOME}/config/genesis.json" ]; then
+    fallback_home="${BOOTSTRAP_FALLBACK_HOME}"
+  else
+    log_error "BOOTSTRAP_FALLBACK_HOME is set but missing config/genesis.json: ${BOOTSTRAP_FALLBACK_HOME}"
+    exit 1
   fi
-done < <(ls -dt "${HOME}"/.celestia-app-mainnet-* 2>/dev/null || true)
+else
+  while IFS= read -r dir; do
+    if [ -f "${dir}/config/genesis.json" ]; then
+      fallback_home="${dir}"
+      break
+    fi
+  done < <(ls -dt "${HOME}"/.celestia-app-mainnet-* 2>/dev/null || true)
+fi
+if [ "${BOOTSTRAP_FALLBACK_MODE}" = "full_home" ] && [ -z "${fallback_home}" ]; then
+  log_error "BOOTSTRAP_FALLBACK_MODE=full_home requires a valid fallback home."
+  exit 1
+fi
 
 copy_bootstrap_fallback() {
   local fallback="$1"
@@ -631,6 +659,26 @@ copy_bootstrap_fallback() {
     return 0
   fi
   return 1
+}
+
+copy_bootstrap_fallback_home() {
+  local fallback="$1"
+  local dest="$2"
+  local path base
+  if [ -z "${fallback}" ] || [ ! -d "${fallback}" ]; then
+    return 1
+  fi
+  mkdir -p "${dest}"
+  shopt -s dotglob nullglob
+  for path in "${fallback}"/*; do
+    base="$(basename "${path}")"
+    if [ "${base}" = "sync" ]; then
+      continue
+    fi
+    cp -a "${path}" "${dest}/"
+  done
+  shopt -u dotglob nullglob
+  return 0
 }
 
 fetch_or_copy() {
@@ -655,7 +703,17 @@ fetch_or_copy() {
 log_info "Using home: ${HOME_DIR}"
 log_info "Logs: ${LOG_DIR}"
 
-"${APPD_BIN}" init treedb-mainnet --chain-id "${CHAIN_ID}" --home "${HOME_DIR}" >/dev/null 2>&1
+BOOTSTRAP_FULL_HOME_SEEDED=0
+if [ "${BOOTSTRAP_FALLBACK_MODE}" = "full_home" ]; then
+  if ! copy_bootstrap_fallback_home "${fallback_home}" "${HOME_DIR}"; then
+    log_error "Failed to seed full home from fallback ${fallback_home}."
+    exit 1
+  fi
+  BOOTSTRAP_FULL_HOME_SEEDED=1
+  log_info "Bootstrap: seeded full home from fallback ${fallback_home}."
+else
+  "${APPD_BIN}" init treedb-mainnet --chain-id "${CHAIN_ID}" --home "${HOME_DIR}" >/dev/null 2>&1
+fi
 
 fetch_or_copy \
   https://raw.githubusercontent.com/celestiaorg/networks/master/celestia/genesis.json \
@@ -916,6 +974,22 @@ import os
 import re
 from pathlib import Path
 
+def replace_key_in_section(data: str, section: str, key: str, replacement: str):
+    pattern = rf"(?ms)^\[{re.escape(section)}\]\n.*?(?=^\[|\Z)"
+    match = re.search(pattern, data)
+    if match is None:
+        return data, 0
+    block = match.group(0)
+    updated_block, count = re.subn(
+        rf"(?m)^{re.escape(key)}\s*=.*$",
+        replacement,
+        block,
+        count=1,
+    )
+    if count == 0:
+        return data, 0
+    return data[:match.start()] + updated_block + data[match.end():], 1
+
 cfg_path = Path(os.environ["HOME_DIR"]) / "config" / "config.toml"
 data = cfg_path.read_text()
 data, pprof_count = re.subn(
@@ -933,15 +1007,17 @@ data, peers_count = re.subn(
     f"persistent_peers = \"{os.environ['PEERS']}\"",
     data,
 )
-data, rpc_count = re.subn(
-    r"(?m)^laddr\s*=\s*\"tcp://127.0.0.1:26657\"$",
+data, rpc_count = replace_key_in_section(
+    data,
+    "rpc",
+    "laddr",
     f"laddr = \"{os.environ['RPC_LADDR']}\"",
-    data,
 )
-data, p2p_count = re.subn(
-    r"(?m)^laddr\s*=\s*\"tcp://0.0.0.0:26656\"$",
-    f"laddr = \"{os.environ['P2P_LADDR']}\"",
+data, p2p_count = replace_key_in_section(
     data,
+    "p2p",
+    "laddr",
+    f"laddr = \"{os.environ['P2P_LADDR']}\"",
 )
 data, db_count = re.subn(
     r"(?m)^db_backend\s*=.*$",
@@ -1136,6 +1212,10 @@ HEAP_CAPTURE_COUNT=0
   echo "freeze_remote_height_at_start=${FREEZE_REMOTE_HEIGHT_AT_START}"
   echo "max_remote_height=${MAX_REMOTE_HEIGHT:-disabled}"
   echo "allow_clamped_target_early_exit=${ALLOW_CLAMPED_TARGET_EARLY_EXIT}"
+  echo "bootstrap_fetch_mode=${BOOTSTRAP_FETCH_MODE}"
+  echo "bootstrap_fallback_mode=${BOOTSTRAP_FALLBACK_MODE}"
+  echo "bootstrap_fallback_home=${fallback_home:-disabled}"
+  echo "bootstrap_full_home_seeded=${BOOTSTRAP_FULL_HOME_SEEDED}"
   echo "stop_at_local_height=${STOP_AT_LOCAL_HEIGHT:-disabled}"
   echo "zero_local_fail_seconds=${ZERO_LOCAL_FAIL_SECONDS}"
   echo "start_home_bytes=${START_HOME_BYTES}"
