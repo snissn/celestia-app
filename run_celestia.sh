@@ -10,6 +10,9 @@ export DB_BACKEND="${DB_BACKEND:-treedb}"
 export APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
 export TREEDB_OPEN_PROFILE="${TREEDB_OPEN_PROFILE:-wal_on_fast}"
 export TREEDB_FORCE_CHECKPOINT_ON_WRITE="${TREEDB_FORCE_CHECKPOINT_ON_WRITE:-0}"
+if [ "${APP_DB_BACKEND}" = "treedb" ]; then
+  export TREEDB_ENABLE_LEAF_GENERATION_PACK_MAINTENANCE="${TREEDB_ENABLE_LEAF_GENERATION_PACK_MAINTENANCE:-1}"
+fi
 # TreeDB no longer guarantees a stable "mode=" field in the open banner. Leave
 # this empty unless you are intentionally testing a build that logs mode=.
 export TREEDB_REQUIRED_OUTER_LEAF_MODE="${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"

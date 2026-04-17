@@ -1207,6 +1207,7 @@ HEAP_CAPTURE_COUNT=0
 	  echo "db_backend=${DB_BACKEND}"
 	  echo "app_db_backend=${APP_DB_BACKEND}"
   echo "treedb_force_checkpoint_on_write=${TREEDB_FORCE_CHECKPOINT_ON_WRITE:-0}"
+  echo "treedb_enable_leaf_generation_pack_maintenance=${TREEDB_ENABLE_LEAF_GENERATION_PACK_MAINTENANCE:-unset}"
   echo "treedb_required_outer_leaf_mode=${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
   echo "treemap_bin=${TREEMAP_BIN:-auto}"
   echo "freeze_remote_height_at_start=${FREEZE_REMOTE_HEIGHT_AT_START}"
