@@ -84,11 +84,6 @@ PPROF_LADDR="localhost:6062"
 DB_BACKEND="${DB_BACKEND:-treedb}"
 APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
 TREEMAP_BIN="${TREEMAP_BIN:-}"
-# TreeDB no longer guarantees a stable "mode=" banner field. If you want to
-# enforce an exact mode value (only when the banner includes it), set this env
-# var explicitly. Leaving it empty only asserts that the TreeDB open banner
-# exists (and avoids false failures when mode is not logged).
-TREEDB_REQUIRED_OUTER_LEAF_MODE="${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
 EXTERNAL_ADDRESS="${EXTERNAL_ADDRESS:-}"
 USE_NET_INFO_PEERS="${USE_NET_INFO_PEERS:-1}"
 # Prefer fresh bootstrap sources by default. Persistent peers remain enabled,
@@ -1219,8 +1214,6 @@ HEAP_CAPTURE_COUNT=0
   echo "home=${HOME_DIR}"
 	  echo "db_backend=${DB_BACKEND}"
 	  echo "app_db_backend=${APP_DB_BACKEND}"
-  echo "treedb_force_checkpoint_on_write=${TREEDB_FORCE_CHECKPOINT_ON_WRITE:-0}"
-  echo "treedb_required_outer_leaf_mode=${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
   echo "treemap_bin=${TREEMAP_BIN:-auto}"
   echo "freeze_remote_height_at_start=${FREEZE_REMOTE_HEIGHT_AT_START}"
   echo "max_remote_height=${MAX_REMOTE_HEIGHT:-disabled}"
@@ -1427,45 +1420,6 @@ fail_and_exit() {
   fi
   print_recent_log_excerpt
   exit 1
-}
-
-assert_treedb_outer_leaf_mode() {
-  if [ "${APP_DB_BACKEND}" != "treedb" ]; then
-    return
-  fi
-  # TreeDB no longer logs a stable open banner by default. Only enforce this
-  # check when explicitly requested (legacy forensics knob).
-  if [ -z "${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}" ]; then
-    return
-  fi
-  local banner
-  local mode
-  local tries=0
-  local max_tries=30
-  while true; do
-    tries=$((tries + 1))
-    banner="$(rg -n "treedb open banner" "${NODE_LOG}" 2>/dev/null \
-      | tail -n 1 \
-      || true)"
-    if [ -n "${banner}" ]; then
-      break
-    fi
-    if [ "${tries}" -ge "${max_tries}" ]; then
-      break
-    fi
-    sleep 1
-  done
-  if [ -z "${banner}" ]; then
-    fail_and_exit "TreeDB open banner check failed: could not find treedb open banner in ${NODE_LOG}"
-  fi
-  mode="$(echo "${banner}" | sed -nE 's/.*mode=([^ ]+).*/\\1/p' || true)"
-  if [ -z "${mode}" ]; then
-    fail_and_exit "TreeDB open banner mode check failed: required=${TREEDB_REQUIRED_OUTER_LEAF_MODE} actual=(missing mode= in banner)"
-  fi
-  if [ "${mode}" != "${TREEDB_REQUIRED_OUTER_LEAF_MODE}" ]; then
-    fail_and_exit "TreeDB open banner mode check failed: required=${TREEDB_REQUIRED_OUTER_LEAF_MODE} actual=${mode}"
-  fi
-  log_info "TreeDB open banner mode validated: ${mode} (required=${TREEDB_REQUIRED_OUTER_LEAF_MODE})"
 }
 
 LAST_ERROR_SCAN_LINE=0
@@ -1722,7 +1676,6 @@ until curl -fsSL "${LOCAL_CURL_OPTS[@]}" "${LOCAL_RPC}/status" >/dev/null 2>&1; 
   sleep 2
 done
 log_info "Local RPC is ready."
-assert_treedb_outer_leaf_mode
 
 LOCAL_HEIGHT=0
 REMOTE_HEIGHT=0

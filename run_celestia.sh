@@ -20,10 +20,6 @@ export CELESTIA_APPD_BIN="${CELESTIA_APPD_BIN:-${REPO_DIR}/build/celestia-appd}"
 export DB_BACKEND="${DB_BACKEND:-treedb}"
 export APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
 export TREEDB_OPEN_PROFILE="${TREEDB_OPEN_PROFILE:-wal_on_fast}"
-export TREEDB_FORCE_CHECKPOINT_ON_WRITE="${TREEDB_FORCE_CHECKPOINT_ON_WRITE:-0}"
-# TreeDB no longer guarantees a stable "mode=" field in the open banner. Leave
-# this empty unless you are intentionally testing a build that logs mode=.
-export TREEDB_REQUIRED_OUTER_LEAF_MODE="${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
 
 # Optional local-module override for gomap to ensure celestia-appd is built
 # against the active local TreeDB branch under development.
