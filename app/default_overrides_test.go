@@ -9,6 +9,7 @@ import (
 	"github.com/celestiaorg/celestia-app/v9/app/params"
 	"github.com/celestiaorg/celestia-app/v9/pkg/appconsts"
 	tmcfg "github.com/cometbft/cometbft/config"
+	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
 	"github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
@@ -47,10 +48,12 @@ func Test_newGovModule(t *testing.T) {
 
 func TestDefaultAppConfig(t *testing.T) {
 	cfg := DefaultAppConfig()
+	defaults := serverconfig.DefaultConfig()
 
 	assert.False(t, cfg.API.Enable)
 	assert.False(t, cfg.GRPC.Enable)
 	assert.False(t, cfg.GRPCWeb.Enable)
+	assert.Equal(t, defaults.AppDBBackend, cfg.AppDBBackend)
 
 	assert.Equal(t, uint64(1500), cfg.StateSync.SnapshotInterval)
 	assert.Equal(t, uint32(2), cfg.StateSync.SnapshotKeepRecent)
@@ -62,6 +65,9 @@ func TestDefaultAppConfig(t *testing.T) {
 
 func TestDefaultConsensusConfig(t *testing.T) {
 	got := DefaultConsensusConfig()
+	defaults := tmcfg.DefaultConfig()
+
+	assert.Equal(t, defaults.DBBackend, got.DBBackend)
 
 	t.Run("RPC overrides", func(t *testing.T) {
 		want := tmcfg.DefaultRPCConfig()
