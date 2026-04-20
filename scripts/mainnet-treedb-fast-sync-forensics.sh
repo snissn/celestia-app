@@ -48,9 +48,13 @@ BOOTSTRAP_CONNECT_TIMEOUT_SECONDS="${BOOTSTRAP_CONNECT_TIMEOUT_SECONDS:-5}"
 BOOTSTRAP_RETRY_COUNT="${BOOTSTRAP_RETRY_COUNT:-2}"
 BOOTSTRAP_RETRY_DELAY_SECONDS="${BOOTSTRAP_RETRY_DELAY_SECONDS:-1}"
 # Modes:
-# - prefer_fallback (default): use the most recent local cached artifact first.
-# - remote_first: try remote fetch first, then fallback on failure.
-BOOTSTRAP_FETCH_MODE="${BOOTSTRAP_FETCH_MODE:-prefer_fallback}"
+# - remote_first (default): try remote fetch first, then fallback on failure.
+# - prefer_fallback: use the most recent local cached artifact first.
+#
+# Fresh peer/snapshot topology matters more than cached startup speed here. We
+# still allow fallback, but we do not want old local peer lists to quietly pin
+# us to stale or incompatible snapshot providers by default.
+BOOTSTRAP_FETCH_MODE="${BOOTSTRAP_FETCH_MODE:-remote_first}"
 # Fallback bootstrap source:
 # - config_only (default): seed genesis/peers/seeds from fallback when available.
 # - full_home: copy an entire cached run home before rewriting config/ports.
@@ -87,9 +91,10 @@ TREEMAP_BIN="${TREEMAP_BIN:-}"
 TREEDB_REQUIRED_OUTER_LEAF_MODE="${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
 EXTERNAL_ADDRESS="${EXTERNAL_ADDRESS:-}"
 USE_NET_INFO_PEERS="${USE_NET_INFO_PEERS:-1}"
-# Prefer persistent peers over seeds for bootstrap. Keep seeds optional/fallback.
+# Prefer fresh bootstrap sources by default. Persistent peers remain enabled,
+# but seeds stay on so we are not over-coupled to any cached peer list.
 MAX_PERSISTENT_PEERS="${MAX_PERSISTENT_PEERS:-120}"
-USE_SEEDS="${USE_SEEDS:-0}"
+USE_SEEDS="${USE_SEEDS:-1}"
 MAX_SEEDS="${MAX_SEEDS:-20}"
 
 # TreeDB trace capture (opt-in via TREEDB_TRACE_PATH).
