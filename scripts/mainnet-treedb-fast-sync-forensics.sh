@@ -666,6 +666,14 @@ copy_bootstrap_fallback() {
   return 1
 }
 
+fallback_artifact_path() {
+  local fallback_root="$1"
+  local rel_path="$2"
+  if [ -n "${fallback_root}" ]; then
+    printf '%s\n' "${fallback_root}/${rel_path}"
+  fi
+}
+
 copy_bootstrap_fallback_home() {
   local fallback="$1"
   local dest="$2"
@@ -723,15 +731,15 @@ fi
 fetch_or_copy \
   https://raw.githubusercontent.com/celestiaorg/networks/master/celestia/genesis.json \
   "${HOME_DIR}/config/genesis.json" \
-  "${fallback_home}/config/genesis.json"
+  "$(fallback_artifact_path "${fallback_home}" "config/genesis.json")"
 fetch_or_copy \
   https://raw.githubusercontent.com/celestiaorg/networks/master/celestia/peers.txt \
   "${HOME_DIR}/config/peers.txt" \
-  "${fallback_home}/config/peers.txt"
+  "$(fallback_artifact_path "${fallback_home}" "config/peers.txt")"
 fetch_or_copy \
   https://raw.githubusercontent.com/celestiaorg/networks/master/celestia/seeds.txt \
   "${HOME_DIR}/config/seeds.txt" \
-  "${fallback_home}/config/seeds.txt"
+  "$(fallback_artifact_path "${fallback_home}" "config/seeds.txt")"
 
 SEEDS="$(awk 'NF { print }' "${HOME_DIR}/config/seeds.txt" | paste -sd, -)"
 PEERS="$(awk 'NF { print }' "${HOME_DIR}/config/peers.txt" | paste -sd, -)"

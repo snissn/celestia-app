@@ -2,10 +2,21 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEV_ROOT="${DEV_ROOT:-$(cd "${REPO_DIR}/.." && pwd)}"
+GO_BIN_DIR="${GO_BIN_DIR:-}"
+if [ -n "${GO_BIN_DIR}" ]; then
+  export PATH="${GO_BIN_DIR}:${PATH}"
+fi
+GO_BIN="${GO_BIN:-go}"
+GO_MOD_VERSION="$(awk '/^go[[:space:]]+/ { print $2; exit }' "${REPO_DIR}/go.mod")"
+if [ -z "${GO_MOD_VERSION}" ]; then
+  echo "[run_celestia] ERROR: failed to read Go version from ${REPO_DIR}/go.mod" >&2
+  exit 1
+fi
+DEFAULT_GOTOOLCHAIN="go${GO_MOD_VERSION}"
 
 # Keep the same defaults used by the existing home-level launcher.
 export CELESTIA_APPD_BIN="${CELESTIA_APPD_BIN:-${REPO_DIR}/build/celestia-appd}"
-export PATH="/home/mikers/go1.23.4/bin:${PATH}"
 export DB_BACKEND="${DB_BACKEND:-treedb}"
 export APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
 export TREEDB_OPEN_PROFILE="${TREEDB_OPEN_PROFILE:-wal_on_fast}"
@@ -17,13 +28,13 @@ export TREEDB_REQUIRED_OUTER_LEAF_MODE="${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
 # Optional local-module override for gomap to ensure celestia-appd is built
 # against the active local TreeDB branch under development.
 USE_LOCAL_GOMAP="${USE_LOCAL_GOMAP:-1}"
-LOCAL_GOMAP_DIR="${LOCAL_GOMAP_DIR:-/home/mikers/dev/snissn/gomap-gemini}"
-LOCAL_COSMOS_DB_DIR="${LOCAL_COSMOS_DB_DIR:-/home/mikers/dev/snissn/cosmos-db}"
-LOCAL_COMET_DB_DIR="${LOCAL_COMET_DB_DIR:-/home/mikers/dev/snissn/cometbft-db}"
-LOCAL_COSMOS_STORE_DIR="${LOCAL_COSMOS_STORE_DIR:-/home/mikers/dev/snissn/celestia-cosmos-sdk/store}"
-LOCAL_COSMOS_LOG_DIR="${LOCAL_COSMOS_LOG_DIR:-/home/mikers/dev/snissn/celestia-cosmos-sdk/log}"
-LOCAL_COSMOS_CORE_DIR="${LOCAL_COSMOS_CORE_DIR:-/home/mikers/dev/snissn/celestia-cosmos-sdk/core}"
-LOCAL_IAVL_DIR="${LOCAL_IAVL_DIR:-/home/mikers/dev/snissn/iavl}"
+LOCAL_GOMAP_DIR="${LOCAL_GOMAP_DIR:-${DEV_ROOT}/gomap}"
+LOCAL_COSMOS_DB_DIR="${LOCAL_COSMOS_DB_DIR:-${DEV_ROOT}/cosmos-db}"
+LOCAL_COMET_DB_DIR="${LOCAL_COMET_DB_DIR:-${DEV_ROOT}/cometbft-db}"
+LOCAL_COSMOS_STORE_DIR="${LOCAL_COSMOS_STORE_DIR:-${DEV_ROOT}/celestia-cosmos-sdk/store}"
+LOCAL_COSMOS_LOG_DIR="${LOCAL_COSMOS_LOG_DIR:-${DEV_ROOT}/celestia-cosmos-sdk/log}"
+LOCAL_COSMOS_CORE_DIR="${LOCAL_COSMOS_CORE_DIR:-${DEV_ROOT}/celestia-cosmos-sdk/core}"
+LOCAL_IAVL_DIR="${LOCAL_IAVL_DIR:-${DEV_ROOT}/iavl}"
 USE_LOCAL_IAVL="${USE_LOCAL_IAVL:-0}"
 USE_LOCAL_COSMOS_STORE="${USE_LOCAL_COSMOS_STORE:-1}"
 
@@ -76,7 +87,7 @@ echo "[run_celestia] Building celestia-appd..."
     trap cleanup EXIT
 
     cat > "${tmp_work}" <<EOF
-go 1.25.7
+go ${GO_MOD_VERSION}
 
 use (
   ${REPO_DIR}
@@ -104,10 +115,10 @@ replace cosmossdk.io/log => ${LOCAL_COSMOS_LOG_DIR}
 replace cosmossdk.io/core => ${LOCAL_COSMOS_CORE_DIR}
 EOF
     fi
-    PATH="/home/mikers/go1.23.4/bin:${PATH}" \
+    "${GO_BIN}" work edit -fmt -workfile="${tmp_work}" >/dev/null 2>&1 || true
+    GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK="${tmp_work}" \
-      GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.7}" \
-      go build -o build/celestia-appd ./cmd/celestia-appd
+      "${GO_BIN}" build -o build/celestia-appd ./cmd/celestia-appd
   elif [ "${USE_LOCAL_GOMAP}" = "1" ]; then
     if [ ! -d "${LOCAL_GOMAP_DIR}" ] || [ ! -f "${LOCAL_GOMAP_DIR}/go.mod" ]; then
       echo "[run_celestia] ERROR: USE_LOCAL_GOMAP=1 but LOCAL_GOMAP_DIR is invalid: ${LOCAL_GOMAP_DIR}" >&2
@@ -126,48 +137,46 @@ EOF
       echo "replace github.com/snissn/gomap => ${LOCAL_GOMAP_DIR}"
     } >> "${tmp_mod}"
 
-    PATH="/home/mikers/go1.23.4/bin:${PATH}" \
+    GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK=off \
-      GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.7}" \
-      go build -modfile="${tmp_mod}" -o build/celestia-appd ./cmd/celestia-appd
+      "${GO_BIN}" build -modfile="${tmp_mod}" -o build/celestia-appd ./cmd/celestia-appd
   else
-    PATH="/home/mikers/go1.23.4/bin:${PATH}" \
+    GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK=off \
-      GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.7}" \
-      go build -o build/celestia-appd ./cmd/celestia-appd
+      "${GO_BIN}" build -o build/celestia-appd ./cmd/celestia-appd
   fi
 )
 
 echo "[run_celestia] Build info (selected modules):"
-go version -m "${CELESTIA_APPD_BIN}" | rg -n "github.com/snissn/gomap|github.com/cosmos/cosmos-db|github.com/cometbft/cometbft-db|github.com/cosmos/iavl|=>"
+"${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | rg -n "github.com/snissn/gomap|github.com/cosmos/cosmos-db|github.com/cometbft/cometbft-db|github.com/cosmos/iavl|=>"
 
 if [ "${USE_LOCAL_TREE_STACK}" = "1" ]; then
-  if ! go version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tgithub.com/snissn/gomap\t(devel)'; then
+  if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tgithub.com/snissn/gomap\t(devel)'; then
     echo "[run_celestia] ERROR: local gomap workspace override not active." >&2
     exit 1
   fi
-  if ! go version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tgithub.com/cosmos/cosmos-db\t(devel)'; then
+  if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tgithub.com/cosmos/cosmos-db\t(devel)'; then
     echo "[run_celestia] ERROR: local cosmos-db workspace override not active." >&2
     exit 1
   fi
-  if ! go version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tgithub.com/cometbft/cometbft-db\t(devel)'; then
+  if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tgithub.com/cometbft/cometbft-db\t(devel)'; then
     echo "[run_celestia] ERROR: local cometbft-db workspace override not active." >&2
     exit 1
   fi
   if [ "${USE_LOCAL_COSMOS_STORE}" = "1" ]; then
-    if ! go version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tcosmossdk.io/store\t(devel)'; then
+    if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq $'dep\tcosmossdk.io/store\t(devel)'; then
       echo "[run_celestia] ERROR: local cosmossdk.io/store workspace override not active." >&2
       exit 1
     fi
   fi
   if [ "${USE_LOCAL_IAVL}" = "1" ]; then
-    if ! go version -m "${CELESTIA_APPD_BIN}" | grep -Fq "${LOCAL_IAVL_DIR}"; then
+    if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq "${LOCAL_IAVL_DIR}"; then
       echo "[run_celestia] ERROR: local iavl override not active in build info." >&2
       exit 1
     fi
   fi
 elif [ "${USE_LOCAL_GOMAP}" = "1" ]; then
-  if ! go version -m "${CELESTIA_APPD_BIN}" | grep -Fq "github.com/snissn/gomap => ${LOCAL_GOMAP_DIR}"; then
+  if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq "github.com/snissn/gomap => ${LOCAL_GOMAP_DIR}"; then
     echo "[run_celestia] ERROR: local gomap override not active in build info." >&2
     exit 1
   fi
@@ -187,14 +196,13 @@ if [ "${APP_DB_BACKEND}" = "treedb" ]; then
     if [ ! -d "${LOCAL_GOMAP_DIR}/TreeDB/cmd/treemap" ] && [ -d "${LOCAL_GOMAP_DIR}/cmd/treemap" ]; then
       treemap_pkg="./cmd/treemap"
     fi
-    PATH="/home/mikers/go1.23.4/bin:${PATH}" \
+    GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK=off \
-      GOTOOLCHAIN="${GOTOOLCHAIN:-go1.25.7}" \
-      go build -o "${TREEMAP_BIN}" "${treemap_pkg}"
+      "${GO_BIN}" build -o "${TREEMAP_BIN}" "${treemap_pkg}"
   )
   export TREEMAP_BIN
   echo "[run_celestia] treemap binary: ${TREEMAP_BIN}"
-  go version -m "${TREEMAP_BIN}" | rg -n "github.com/snissn/gomap|=>"
+  "${GO_BIN}" version -m "${TREEMAP_BIN}" | rg -n "github.com/snissn/gomap|=>"
 fi
 
 echo "[run_celestia] Starting monitored sync..."

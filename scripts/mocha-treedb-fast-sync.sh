@@ -21,6 +21,7 @@ RPC_LADDR="tcp://127.0.0.1:27657"
 PPROF_LADDR="localhost:6061"
 DB_BACKEND="${DB_BACKEND:-treedb}"
 APP_DB_BACKEND="${APP_DB_BACKEND:-${DB_BACKEND}}"
+SEED_EXCLUDE_PATTERN="${SEED_EXCLUDE_PATTERN:-}"
 
 TS="$(date +%Y%m%d%H%M%S)"
 HOME_DIR="${HOME}/.celestia-app-mocha-${DB_BACKEND}-${TS}"
@@ -42,12 +43,31 @@ curl -fsSL https://raw.githubusercontent.com/celestiaorg/networks/master/mocha-4
 curl -fsSL https://raw.githubusercontent.com/celestiaorg/networks/master/mocha-4/seeds.txt \
   -o "${HOME_DIR}/config/seeds.txt"
 
-SEEDS="$(grep -Ev '^\s*$|aviaone' "${HOME_DIR}/config/seeds.txt" | paste -sd, -)"
+seed_filter='^\s*$'
+if [ -n "${SEED_EXCLUDE_PATTERN}" ]; then
+  seed_filter="${seed_filter}|${SEED_EXCLUDE_PATTERN}"
+fi
+SEEDS="$(grep -Ev "${seed_filter}" "${HOME_DIR}/config/seeds.txt" | paste -sd, -)"
 PEERS="$(grep -Ev '^\s*$' "${HOME_DIR}/config/peers.txt" | paste -sd, -)"
 
 NET_INFO_JSON="$(curl -fsSL "${RPC1}/net_info" 2>/dev/null || curl -fsSL "${RPC2}/net_info" 2>/dev/null || true)"
 if [ -n "${NET_INFO_JSON}" ]; then
-  NET_INFO_PEERS="$(echo "${NET_INFO_JSON}" | jq -r '.result.peers[] | .node_info.id + "@" + .remote_ip + ":" + (.node_info.listen_addr | split(":") | last)' | head -n 20 | paste -sd, -)"
+  NET_INFO_PEERS="$(echo "${NET_INFO_JSON}" | jq -r '
+    .result.peers[]
+    | .node_info.id as $id
+    | .remote_ip as $ip
+    | (.node_info.listen_addr | capture(":(?<port>[0-9]+)$").port?) as $port
+    | select($id != null and $id != "" and $ip != null and $ip != "" and $port != null and $port != "")
+    | "\($id)@" + (
+        if ($ip | startswith("[") and endswith("]")) then
+          $ip
+        elif ($ip | contains(":")) then
+          "[\($ip)]"
+        else
+          $ip
+        end
+      ) + ":\($port)"
+  ' | head -n 20 | paste -sd, -)"
   if [ -n "${NET_INFO_PEERS}" ]; then
     PEERS="${NET_INFO_PEERS}"
   fi
@@ -121,8 +141,20 @@ app_path.write_text(data)
 PY
 
 LATEST="$(curl -fsSL "${RPC1}/status" 2>/dev/null | jq -r .result.sync_info.latest_block_height || curl -fsSL "${RPC2}/status" 2>/dev/null | jq -r .result.sync_info.latest_block_height)"
+if ! [[ "${LATEST}" =~ ^[0-9]+$ ]]; then
+  echo "Failed to determine a valid latest block height from ${RPC1} or ${RPC2}."
+  exit 1
+fi
+if [ "${LATEST}" -le 2000 ]; then
+  echo "Latest block height ${LATEST} is too low to derive trust height."
+  exit 1
+fi
 TRUST_HEIGHT=$((LATEST-2000))
 TRUST_HASH="$(curl -fsSL "${RPC1}/block?height=${TRUST_HEIGHT}" 2>/dev/null | jq -r .result.block_id.hash || curl -fsSL "${RPC2}/block?height=${TRUST_HEIGHT}" 2>/dev/null | jq -r .result.block_id.hash)"
+if [ -z "${TRUST_HASH}" ] || [ "${TRUST_HASH}" = "null" ]; then
+  echo "Failed to determine trust hash for height ${TRUST_HEIGHT} from ${RPC1} or ${RPC2}."
+  exit 1
+fi
 
 export HOME_DIR RPC1 RPC2 TRUST_HEIGHT TRUST_HASH
 python3 - <<'PY'
