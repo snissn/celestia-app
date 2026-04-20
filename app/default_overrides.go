@@ -257,7 +257,6 @@ func EvidenceParams() *tmproto.EvidenceParams {
 
 func DefaultConsensusConfig() *tmcfg.Config {
 	cfg := tmcfg.DefaultConfig()
-	cfg.DBBackend = "treedb"
 	// Set broadcast timeout to be 50 seconds in order to avoid timeouts for long block times
 	cfg.RPC.TimeoutBroadcastTxCommit = 50 * time.Second
 	// this value should be the same as the largest possible response. In this case, that's
@@ -292,7 +291,6 @@ func DefaultAppConfig() *serverconfig.Config {
 	cfg.API.Enable = false
 	cfg.GRPC.Enable = false
 	cfg.GRPCWeb.Enable = false
-	cfg.AppDBBackend = "treedb"
 
 	// the default snapshot interval was determined by picking a large enough
 	// value as to not dramatically increase resource requirements while also
