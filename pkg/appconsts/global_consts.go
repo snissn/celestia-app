@@ -35,8 +35,13 @@ var (
 	// hashLength is the length of a hash in bytes.
 	hashLength = NewBaseHashFunc().Size()
 
-	// DefaultCodec is the default codec creator used for data erasure.
-	DefaultCodec = rsmt2d.NewLeoRSCodec
+	sharedDefaultCodec rsmt2d.Codec = rsmt2d.NewLeoRSCodec()
+
+	// DefaultCodec returns the default codec used for data erasure.
+	//
+	// Reusing a single codec instance preserves the internal reed-solomon encoder
+	// cache and work pools across EDS constructions.
+	DefaultCodec = func() rsmt2d.Codec { return sharedDefaultCodec }
 
 	// SupportedShareVersions is a list of supported share versions.
 	SupportedShareVersions = share.SupportedShareVersions
