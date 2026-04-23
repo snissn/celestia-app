@@ -11,6 +11,7 @@ import (
 
 	"github.com/celestiaorg/celestia-app/v9/pkg/appconsts"
 	"github.com/celestiaorg/celestia-app/v9/test/util/testfactory"
+	"github.com/celestiaorg/nmt"
 	"github.com/celestiaorg/rsmt2d"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,24 @@ func TestTreePool_AcquireRelease(t *testing.T) {
 		tree := constructor(rsmt2d.Row, uint(i))
 		require.NotNil(t, tree)
 	}
+}
+
+func TestTreePool_LazyAllocates(t *testing.T) {
+	pool, err := NewTreePool(16, 4)
+	require.NoError(t, err)
+	require.Zero(t, pool.created)
+	require.Zero(t, len(pool.availableNMTs))
+
+	constructor := pool.NewConstructor(16)
+	tree := constructor(rsmt2d.Row, 0)
+	require.NotNil(t, tree)
+	require.Equal(t, 1, pool.created)
+	require.Zero(t, len(pool.availableNMTs))
+
+	_, err = tree.Root()
+	require.NoError(t, err)
+	require.Equal(t, 1, pool.created)
+	require.Equal(t, 1, len(pool.availableNMTs))
 }
 
 func TestResizeableBufferTree_WithPoolReuse(t *testing.T) {
@@ -277,4 +296,42 @@ func BenchmarkExtendedDataSquare_WithoutPool(b *testing.B) {
 			}
 		})
 	}
+}
+
+func BenchmarkNewTreePool(b *testing.B) {
+	b.Run("lazy", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			pool, err := NewTreePool(512, runtime.NumCPU()*4)
+			require.NoError(b, err)
+			require.NotNil(b, pool)
+		}
+	})
+
+	b.Run("eager-baseline", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			pool, err := newEagerTestTreePool(512, runtime.NumCPU()*4)
+			require.NoError(b, err)
+			require.NotNil(b, pool)
+		}
+	})
+}
+
+func newEagerTestTreePool(initSquareSize uint, poolSize int, opts ...nmt.Option) (*TreePool, error) {
+	pool := &TreePool{
+		availableNMTs:  make(chan *resizeableBufferTree, poolSize),
+		initSquareSize: initSquareSize,
+		opts:           append([]nmt.Option(nil), opts...),
+		poolSize:       poolSize,
+		created:        poolSize,
+	}
+	for range poolSize {
+		tree, err := newResizeableBufferTree(initSquareSize, 0, pool, opts...)
+		if err != nil {
+			return nil, err
+		}
+		pool.availableNMTs <- tree
+	}
+	return pool, nil
 }

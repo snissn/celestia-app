@@ -3,6 +3,7 @@ package wrapper
 import (
 	"fmt"
 	"runtime"
+	"sync"
 
 	"github.com/celestiaorg/celestia-app/v9/pkg/appconsts"
 	"github.com/celestiaorg/go-square/v4/share"
@@ -12,8 +13,12 @@ import (
 
 // TreePool provides a fixed-size pool of resizeableBufferTree instances.
 type TreePool struct {
-	availableNMTs chan *resizeableBufferTree
-	poolSize      int
+	availableNMTs  chan *resizeableBufferTree
+	initSquareSize uint
+	opts           []nmt.Option
+	mu             sync.Mutex
+	created        int
+	poolSize       int
 }
 
 // DefaultPreallocatedTreePool creates a new TreePool with a default pool size
@@ -27,17 +32,10 @@ func NewTreePool(initSquareSize uint, poolSize int, opts ...nmt.Option) (*TreePo
 		return nil, fmt.Errorf("pool size must be positive: %d", poolSize)
 	}
 	pool := &TreePool{
-		availableNMTs: make(chan *resizeableBufferTree, poolSize),
-		poolSize:      poolSize,
-	}
-
-	// initialize the pool with trees configured for initSquareSize
-	for range poolSize {
-		tree, err := newResizeableBufferTree(initSquareSize, 0, pool, opts...)
-		if err != nil {
-			return nil, err
-		}
-		pool.availableNMTs <- tree
+		availableNMTs:  make(chan *resizeableBufferTree, poolSize),
+		initSquareSize: initSquareSize,
+		opts:           append([]nmt.Option(nil), opts...),
+		poolSize:       poolSize,
 	}
 
 	return pool, nil
@@ -45,6 +43,16 @@ func NewTreePool(initSquareSize uint, poolSize int, opts ...nmt.Option) (*TreePo
 
 // acquire retrieves a resizeableBufferTree from the pool.
 func (p *TreePool) acquire() *resizeableBufferTree {
+	select {
+	case tree := <-p.availableNMTs:
+		return tree
+	default:
+	}
+
+	if tree := p.maybeCreate(); tree != nil {
+		return tree
+	}
+
 	return <-p.availableNMTs
 }
 
@@ -56,6 +64,22 @@ func (p *TreePool) release(tree *resizeableBufferTree) {
 // TreeCount returns the number of trees in the pool.
 func (p *TreePool) TreeCount() int {
 	return p.poolSize
+}
+
+func (p *TreePool) maybeCreate() *resizeableBufferTree {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.created >= p.poolSize {
+		return nil
+	}
+
+	tree, err := newResizeableBufferTree(p.initSquareSize, 0, p, p.opts...)
+	if err != nil {
+		panic(err)
+	}
+	p.created++
+	return tree
 }
 
 // NewConstructor returns a tree constructor function that uses the pool with the specified square size.
