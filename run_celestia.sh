@@ -179,9 +179,13 @@ if [ "${USE_LOCAL_TREE_STACK}" = "1" ]; then
     fi
   fi
 elif [ "${USE_LOCAL_GOMAP}" = "1" ]; then
-  if ! "${GO_BIN}" version -m "${CELESTIA_APPD_BIN}" | grep -Fq "github.com/snissn/gomap => ${LOCAL_GOMAP_DIR}"; then
-    echo "[run_celestia] ERROR: local gomap override not active in build info." >&2
-    exit 1
+  build_info="$("${GO_BIN}" version -m "${CELESTIA_APPD_BIN}")"
+  if ! grep -Fq "${LOCAL_GOMAP_DIR}" <<<"${build_info}"; then
+    if grep -Fq "github.com/snissn/gomap" <<<"${build_info}"; then
+      echo "[run_celestia] ERROR: local gomap override not active in build info." >&2
+      exit 1
+    fi
+    echo "[run_celestia] WARN: celestia-appd build metadata does not include github.com/snissn/gomap; USE_LOCAL_GOMAP has no app-binary effect in this module graph." >&2
   fi
 fi
 

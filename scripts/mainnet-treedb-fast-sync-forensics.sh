@@ -668,8 +668,9 @@ copy_bootstrap_fallback() {
   local fallback="$1"
   local dest="$2"
   if [ -n "${fallback}" ] && [ -f "${fallback}" ]; then
-    cp "${fallback}" "${dest}"
-    return 0
+    if cp "${fallback}" "${dest}"; then
+      return 0
+    fi
   fi
   return 1
 }
