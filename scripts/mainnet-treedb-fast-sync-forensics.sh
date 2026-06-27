@@ -695,20 +695,26 @@ copy_bootstrap_fallback_home() {
   local fallback="$1"
   local dest="$2"
   local path base
+  local status=0
   if [ -z "${fallback}" ] || [ ! -d "${fallback}" ]; then
     return 1
   fi
-  mkdir -p "${dest}"
+  if ! mkdir -p "${dest}"; then
+    return 1
+  fi
   shopt -s dotglob nullglob
   for path in "${fallback}"/*; do
     base="$(basename "${path}")"
     if [ "${base}" = "sync" ]; then
       continue
     fi
-    cp -a "${path}" "${dest}/"
+    if ! cp -a "${path}" "${dest}/"; then
+      status=1
+      break
+    fi
   done
   shopt -u dotglob nullglob
-  return 0
+  return "${status}"
 }
 
 fetch_or_copy() {
