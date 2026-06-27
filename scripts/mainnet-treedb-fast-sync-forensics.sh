@@ -1565,7 +1565,7 @@ assert_treedb_outer_leaf_mode() {
   if [ -z "${banner}" ]; then
     fail_and_exit "TreeDB open banner check failed: could not find treedb open banner in ${NODE_LOG}"
   fi
-  mode="$(echo "${banner}" | sed -nE 's/.*mode=([^ ]+).*/\\1/p' || true)"
+  mode="$(echo "${banner}" | sed -nE 's/.*mode=([^ ]+).*/\1/p' || true)"
   if [ -z "${mode}" ]; then
     fail_and_exit "TreeDB open banner mode check failed: required=${TREEDB_REQUIRED_OUTER_LEAF_MODE} actual=(missing mode= in banner)"
   fi
