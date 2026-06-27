@@ -558,7 +558,9 @@ append_treedb_trace_report() {
 
 prune_old_run_homes() {
   local keep_raw="${1:-0}"
+  local protected_home="${2:-}"
   local keep=0
+  local protected_resolved=""
   if ! is_non_negative_int "${keep_raw}"; then
     log_warn "KEEP_RECENT_RUNS must be a non-negative integer (got: ${keep_raw}); skipping prune."
     return 0
@@ -566,6 +568,9 @@ prune_old_run_homes() {
   keep="${keep_raw}"
   if [ "${keep}" -le 0 ]; then
     return 0
+  fi
+  if [ -n "${protected_home}" ] && [ -d "${protected_home}" ]; then
+    protected_resolved="$(cd "${protected_home}" && pwd -P)"
   fi
 
   local run_homes=()
@@ -577,6 +582,9 @@ prune_old_run_homes() {
 
   for dir in "${run_homes[@]:${keep}}"; do
     if [ -n "${dir}" ] && [ -d "${dir}" ]; then
+      if [ -n "${protected_resolved}" ] && [ "$(cd "${dir}" && pwd -P)" = "${protected_resolved}" ]; then
+        continue
+      fi
       rm -rf -- "${dir}" 2>/dev/null || true
       removed=$((removed + 1))
     fi
@@ -586,7 +594,7 @@ prune_old_run_homes() {
   fi
 }
 
-prune_old_run_homes "${KEEP_RECENT_RUNS}"
+prune_old_run_homes "${KEEP_RECENT_RUNS}" "${BOOTSTRAP_FALLBACK_HOME}"
 
 mkdir -p "${LOG_DIR}"
 DIAG_DIR="${LOG_DIR}/diagnostics"

@@ -50,6 +50,7 @@ echo "[run_celestia] Building celestia-appd..."
 (
   set -eu
   cd "${REPO_DIR}"
+  mkdir -p "$(dirname "${CELESTIA_APPD_BIN}")"
 
   if [ "${USE_LOCAL_TREE_STACK}" = "1" ]; then
     if [ ! -d "${LOCAL_GOMAP_DIR}" ] || [ ! -f "${LOCAL_GOMAP_DIR}/go.mod" ]; then
@@ -121,7 +122,7 @@ EOF
     "${GO_BIN}" work edit -fmt -workfile="${tmp_work}" >/dev/null 2>&1 || true
     GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK="${tmp_work}" \
-      "${GO_BIN}" build -o build/celestia-appd ./cmd/celestia-appd
+      "${GO_BIN}" build -o "${CELESTIA_APPD_BIN}" ./cmd/celestia-appd
   elif [ "${USE_LOCAL_GOMAP}" = "1" ]; then
     if [ ! -d "${LOCAL_GOMAP_DIR}" ] || [ ! -f "${LOCAL_GOMAP_DIR}/go.mod" ]; then
       echo "[run_celestia] ERROR: USE_LOCAL_GOMAP=1 but LOCAL_GOMAP_DIR is invalid: ${LOCAL_GOMAP_DIR}" >&2
@@ -142,11 +143,11 @@ EOF
 
     GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK=off \
-      "${GO_BIN}" build -modfile="${tmp_mod}" -o build/celestia-appd ./cmd/celestia-appd
+      "${GO_BIN}" build -modfile="${tmp_mod}" -o "${CELESTIA_APPD_BIN}" ./cmd/celestia-appd
   else
     GOTOOLCHAIN="${GOTOOLCHAIN:-${DEFAULT_GOTOOLCHAIN}}" \
       GOWORK=off \
-      "${GO_BIN}" build -o build/celestia-appd ./cmd/celestia-appd
+      "${GO_BIN}" build -o "${CELESTIA_APPD_BIN}" ./cmd/celestia-appd
   fi
 )
 
