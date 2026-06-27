@@ -107,12 +107,17 @@ TREEDB_TRACE_ANALYSIS_LONG_ITER_MS="${TREEDB_TRACE_ANALYSIS_LONG_ITER_MS:-1000}"
 TREEDB_TRACE_ANALYSIS_SAMPLE_EVERY_N="${TREEDB_TRACE_ANALYSIS_SAMPLE_EVERY_N:-1}"
 TREEDB_TRACE_ANALYSIS_MAX_EVENTS="${TREEDB_TRACE_ANALYSIS_MAX_EVENTS:-200000}"
 TREEDB_TRACE_ANALYSIS_ON_WARN_STUCK="${TREEDB_TRACE_ANALYSIS_ON_WARN_STUCK:-0}"
+TREEDB_VLOG_MAINTENANCE_PAUSE_FILE="${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE:-}"
 
 TS="$(date +%Y%m%d%H%M%S)"
 HOME_DIR="${HOME}/.celestia-app-mainnet-${DB_BACKEND}-${TS}"
 LOG_DIR="${HOME_DIR}/sync"
 NODE_LOG="${LOG_DIR}/node.log"
 TIME_LOG="${LOG_DIR}/sync-time.log"
+if [ -z "${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}" ]; then
+  TREEDB_VLOG_MAINTENANCE_PAUSE_FILE="${HOME_DIR}/treedb-vlog-maintenance.pause"
+fi
+export TREEDB_VLOG_MAINTENANCE_PAUSE_FILE
 
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 WAIT_RPC_TIMEOUT_SECONDS="${WAIT_RPC_TIMEOUT_SECONDS:-180}"
@@ -155,6 +160,9 @@ STOP_AT_LOCAL_HEIGHT="${STOP_AT_LOCAL_HEIGHT:-}"
 # reaches the computed target even if status still reports catching_up=true.
 # This avoids processing extra tip blocks beyond the requested comparison target.
 ALLOW_CLAMPED_TARGET_EARLY_EXIT="${ALLOW_CLAMPED_TARGET_EARLY_EXIT:-1}"
+# Keep the node alive for a bounded steady-state window after sync completion so
+# runtime maintenance can execute before final pre-offline sizes are captured.
+POST_SYNC_DWELL_SECONDS="${POST_SYNC_DWELL_SECONDS:-0}"
 
 ERROR_PATTERNS='valuelog: corrupt record|state sync failed|state sync aborted|failed to restore snapshot|IAVL node import failed|IAVL commit failed|panic:|fatal error'
 
@@ -1164,6 +1172,15 @@ safe_du_bytes() {
   fi
 }
 
+safe_du_physical_bytes() {
+  local target="$1"
+  if [ -e "${target}" ]; then
+    du -s "${target}" 2>/dev/null | awk 'NF {print $1 * 1024}' || echo 0
+  else
+    echo 0
+  fi
+}
+
 print_top_files_by_size() {
   local root="$1"
   local limit="${2:-20}"
@@ -1200,6 +1217,77 @@ for size, path in sorted(heap, reverse=True):
 PY
 }
 
+capture_dwell_sample() {
+  local sample_idx="$1"
+  local dwell_dir="$2"
+  local app_db="$3"
+  local status debug_vars_file treedb_app_file sample_file ts rss_kb hwm_kb
+
+  mkdir -p "${dwell_dir}"
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  status="$(curl -fsSL "${LOCAL_CURL_OPTS[@]}" "${LOCAL_RPC}/status" 2>/dev/null || true)"
+  if [ -z "${status}" ] || ! jq -e . >/dev/null 2>&1 <<<"${status}"; then
+    status='{}'
+  fi
+
+  debug_vars_file="${dwell_dir}/debug_vars_${sample_idx}.json"
+  curl -fsS --max-time 5 "${PPROF_HTTP_URL}/debug/vars" > "${debug_vars_file}" 2>/dev/null || printf '{}\n' > "${debug_vars_file}"
+
+  treedb_app_file="${dwell_dir}/treedb_app_${sample_idx}.json"
+  jq '
+    (.treedb.instances // {})
+    | to_entries
+    | map(select(.key | endswith("/data/application.db/maindb/wal")))
+    | if length > 0 then .[0].value else {} end
+  ' "${debug_vars_file}" > "${treedb_app_file}" 2>/dev/null || printf '{}\n' > "${treedb_app_file}"
+
+  rss_kb=0
+  hwm_kb=0
+  if [ -r "/proc/${NODE_PID}/status" ]; then
+    rss_kb="$(awk '/VmRSS:/ {print $2}' "/proc/${NODE_PID}/status" 2>/dev/null || true)"
+    hwm_kb="$(awk '/VmHWM:/ {print $2}' "/proc/${NODE_PID}/status" 2>/dev/null || true)"
+  fi
+  if [ -z "${rss_kb}" ]; then
+    rss_kb=0
+  fi
+  if [ -z "${hwm_kb}" ]; then
+    hwm_kb=0
+  fi
+
+  sample_file="${dwell_dir}/sample_${sample_idx}.json"
+  jq -n \
+    --arg timestamp "${ts}" \
+    --argjson idx "${sample_idx}" \
+    --argjson status "${status}" \
+    --argjson home_apparent_bytes "$(safe_du_bytes "${HOME_DIR}")" \
+    --argjson home_physical_bytes "$(safe_du_physical_bytes "${HOME_DIR}")" \
+    --argjson app_db_apparent_bytes "$(safe_du_bytes "${app_db}")" \
+    --argjson app_db_physical_bytes "$(safe_du_physical_bytes "${app_db}")" \
+    --argjson maindb_apparent_bytes "$(safe_du_bytes "${app_db}/maindb")" \
+    --argjson maindb_physical_bytes "$(safe_du_physical_bytes "${app_db}/maindb")" \
+    --argjson wal_apparent_bytes "$(safe_du_bytes "${app_db}/maindb/wal")" \
+    --argjson wal_physical_bytes "$(safe_du_physical_bytes "${app_db}/maindb/wal")" \
+    --argjson vmrss_kb "${rss_kb}" \
+    --argjson vmhwm_kb "${hwm_kb}" \
+    --slurpfile treedb_app "${treedb_app_file}" \
+    '{
+      timestamp:$timestamp,
+      idx:$idx,
+      status:$status,
+      home_apparent_bytes:$home_apparent_bytes,
+      home_physical_bytes:$home_physical_bytes,
+      app_db_apparent_bytes:$app_db_apparent_bytes,
+      app_db_physical_bytes:$app_db_physical_bytes,
+      maindb_apparent_bytes:$maindb_apparent_bytes,
+      maindb_physical_bytes:$maindb_physical_bytes,
+      wal_apparent_bytes:$wal_apparent_bytes,
+      wal_physical_bytes:$wal_physical_bytes,
+      vmrss_kb:$vmrss_kb,
+      vmhwm_kb:$vmhwm_kb,
+      treedb_app:($treedb_app[0] // {})
+    }' > "${sample_file}"
+}
+
 START_HOME_BYTES="$(safe_du_bytes "${HOME_DIR}")"
 START_DATA_BYTES="$(safe_du_bytes "${HOME_DIR}/data")"
 START_APP_BYTES="$(safe_du_bytes "${HOME_DIR}/data/application.db")"
@@ -1217,10 +1305,12 @@ HEAP_CAPTURE_COUNT=0
   echo "trust_height=${TRUST_HEIGHT}"
   echo "trust_hash=${TRUST_HASH}"
   echo "home=${HOME_DIR}"
-	  echo "db_backend=${DB_BACKEND}"
-	  echo "app_db_backend=${APP_DB_BACKEND}"
+  echo "db_backend=${DB_BACKEND}"
+  echo "app_db_backend=${APP_DB_BACKEND}"
   echo "treedb_force_checkpoint_on_write=${TREEDB_FORCE_CHECKPOINT_ON_WRITE:-0}"
+  echo "treedb_enable_leaf_generation_pack_maintenance=${TREEDB_ENABLE_LEAF_GENERATION_PACK_MAINTENANCE:-unset}"
   echo "treedb_required_outer_leaf_mode=${TREEDB_REQUIRED_OUTER_LEAF_MODE:-}"
+  echo "treedb_vlog_maintenance_pause_file=${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}"
   echo "treemap_bin=${TREEMAP_BIN:-auto}"
   echo "freeze_remote_height_at_start=${FREEZE_REMOTE_HEIGHT_AT_START}"
   echo "max_remote_height=${MAX_REMOTE_HEIGHT:-disabled}"
@@ -1230,6 +1320,7 @@ HEAP_CAPTURE_COUNT=0
   echo "bootstrap_fallback_home=${fallback_home:-disabled}"
   echo "bootstrap_full_home_seeded=${BOOTSTRAP_FULL_HOME_SEEDED}"
   echo "stop_at_local_height=${STOP_AT_LOCAL_HEIGHT:-disabled}"
+  echo "post_sync_dwell_seconds=${POST_SYNC_DWELL_SECONDS}"
   echo "zero_local_fail_seconds=${ZERO_LOCAL_FAIL_SECONDS}"
   echo "start_home_bytes=${START_HOME_BYTES}"
   echo "start_data_bytes=${START_DATA_BYTES}"
@@ -1409,6 +1500,7 @@ stop_node_process() {
 }
 
 cleanup_node() {
+  rm -f "${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}" >/dev/null 2>&1 || true
   stop_node_process "exit-trap" || true
 }
 trap cleanup_node EXIT
@@ -1700,6 +1792,8 @@ is_active_restore() {
 }
 
 log_info "Starting node..."
+mkdir -p "$(dirname "${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}")"
+printf 'paused during sync until catching_up=false\n' > "${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}"
 "${APPD_BIN}" start --home "${HOME_DIR}" --force-no-bbr >"${NODE_LOG}" 2>&1 &
 NODE_PID=$!
 
@@ -1991,6 +2085,81 @@ if [ "${SYNC_COMPLETE}" -ne 1 ]; then
   fail_and_exit "Sync monitor exited without success."
 fi
 
+if [ -f "${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}" ]; then
+  rm -f "${TREEDB_VLOG_MAINTENANCE_PAUSE_FILE}"
+  log_info "Unpaused TreeDB value-log maintenance for post-sync steady-state dwell."
+fi
+
+SYNC_END_EPOCH="$(date +%s)"
+SYNC_END_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+SYNC_DURATION=$((SYNC_END_EPOCH-START_EPOCH))
+
+if is_non_negative_int "${POST_SYNC_DWELL_SECONDS}" && [ "${POST_SYNC_DWELL_SECONDS}" -gt 0 ]; then
+  log_info "Sync complete: local=${LOCAL_HEIGHT} remote=${REMOTE_HEIGHT}. Dwelling for ${POST_SYNC_DWELL_SECONDS}s before shutdown..."
+  DWELL_UNTIL_EPOCH=$((SYNC_END_EPOCH + POST_SYNC_DWELL_SECONDS))
+  DWELL_STATS_DIR="${LOG_DIR}/dwell-stats"
+  DWELL_SAMPLE_IDX=0
+  NEXT_DWELL_SAMPLE_EPOCH="${SYNC_END_EPOCH}"
+  while true; do
+    NOW_EPOCH="$(date +%s)"
+    if [ "${NOW_EPOCH}" -ge "${DWELL_UNTIL_EPOCH}" ]; then
+      break
+    fi
+    if ! kill -0 "${NODE_PID}" >/dev/null 2>&1; then
+      fail_and_exit "Node process exited during post-sync dwell."
+    fi
+    if has_new_node_error; then
+      log_error "Detected fatal node error in recent logs during post-sync dwell:"
+      print_recent_error_matches
+      fail_and_exit "Post-sync dwell aborted by node error."
+    fi
+
+    RSS_KB=""
+    if command -v ps >/dev/null 2>&1; then
+      RSS_KB="$(ps -o rss= -p "${NODE_PID}" 2>/dev/null | awk '{print $1}' || true)"
+    fi
+    if [ -z "${RSS_KB}" ] && [ -r "/proc/${NODE_PID}/status" ]; then
+      RSS_KB="$(awk '/VmRSS:/ {print $2}' "/proc/${NODE_PID}/status" 2>/dev/null || true)"
+    fi
+    if [ -r "/proc/${NODE_PID}/status" ]; then
+      HWM_KB="$(awk '/VmHWM:/ {print $2}' "/proc/${NODE_PID}/status" 2>/dev/null || true)"
+    else
+      HWM_KB=""
+    fi
+    if [ -n "${RSS_KB}" ] && [ "${RSS_KB}" -gt "${MAX_RSS_KB}" ]; then
+      MAX_RSS_KB="${RSS_KB}"
+      if is_non_negative_int "${HEAP_CAPTURE_RSS_DELTA_KB}" && [ "${HEAP_CAPTURE_RSS_DELTA_KB}" -gt 0 ]; then
+        if [ -z "${LAST_HEAP_CAPTURE_RSS_KB}" ] || ! is_non_negative_int "${LAST_HEAP_CAPTURE_RSS_KB}"; then
+          LAST_HEAP_CAPTURE_RSS_KB=0
+        fi
+        if [ $((RSS_KB - LAST_HEAP_CAPTURE_RSS_KB)) -ge "${HEAP_CAPTURE_RSS_DELTA_KB}" ]; then
+          capture_heap_profile "post-sync-dwell" "${RSS_KB}"
+          LAST_HEAP_CAPTURE_RSS_KB="${RSS_KB}"
+        fi
+      fi
+    fi
+    if [ -n "${HWM_KB}" ] && [ "${HWM_KB}" -gt "${MAX_HWM_KB}" ]; then
+      MAX_HWM_KB="${HWM_KB}"
+    fi
+
+    if [ "${NOW_EPOCH}" -ge "${NEXT_DWELL_SAMPLE_EPOCH}" ]; then
+      capture_dwell_sample "${DWELL_SAMPLE_IDX}" "${DWELL_STATS_DIR}" "${HOME_DIR}/data/application.db"
+      DWELL_SAMPLE_IDX=$((DWELL_SAMPLE_IDX + 1))
+      NEXT_DWELL_SAMPLE_EPOCH=$((NEXT_DWELL_SAMPLE_EPOCH + 60))
+    fi
+
+    REMAINING=$((DWELL_UNTIL_EPOCH - NOW_EPOCH))
+    if [ "${REMAINING}" -le 0 ]; then
+      break
+    fi
+    if [ "${REMAINING}" -lt "${POLL_INTERVAL_SECONDS}" ]; then
+      sleep "${REMAINING}"
+    else
+      sleep "${POLL_INTERVAL_SECONDS}"
+    fi
+  done
+fi
+
 # Ensure we always preserve at least one heap/smaps snapshot near the true
 # observed peak, even when intermediate delta-trigger captures missed the final
 # crest.
@@ -2002,15 +2171,20 @@ fi
 
 END_EPOCH="$(date +%s)"
 END_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-DURATION=$((END_EPOCH-START_EPOCH))
+POST_SYNC_DWELL_ELAPSED_SECONDS=$((END_EPOCH-SYNC_END_EPOCH))
+TOTAL_DURATION=$((END_EPOCH-START_EPOCH))
 END_HOME_BYTES="$(safe_du_bytes "${HOME_DIR}")"
 END_DATA_BYTES="$(safe_du_bytes "${HOME_DIR}/data")"
 END_APP_BYTES="$(safe_du_bytes "${HOME_DIR}/data/application.db")"
 END_BLOCKSTORE_BYTES="$(safe_du_bytes "${HOME_DIR}/data/blockstore.db")"
 
 {
+  echo "sync_complete_utc=${SYNC_END_TS}"
+  echo "sync_duration_seconds=${SYNC_DURATION}"
   echo "end_utc=${END_TS}"
-  echo "duration_seconds=${DURATION}"
+  echo "duration_seconds=${SYNC_DURATION}"
+  echo "total_duration_seconds=${TOTAL_DURATION}"
+  echo "post_sync_dwell_elapsed_seconds=${POST_SYNC_DWELL_ELAPSED_SECONDS}"
   echo "final_local_height=${LOCAL_HEIGHT}"
   echo "final_remote_height=${REMOTE_HEIGHT}"
   if [ -n "${REMOTE_HEIGHT_ACTUAL}" ]; then
