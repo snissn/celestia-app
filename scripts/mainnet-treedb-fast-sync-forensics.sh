@@ -1232,6 +1232,23 @@ for size, path in sorted(heap, reverse=True):
 PY
 }
 
+write_treedb_app_vars() {
+  local debug_vars_file="$1"
+  local out_file="$2"
+  local app_wal_dir="$3"
+
+  jq --arg app_wal_dir "${app_wal_dir}" '
+    def app_wal_dir:
+      .value["treedb.expvar.wal_dir"]
+      // .value["treedb.process.identity.wal_dir"]
+      // (.key | split("#")[0]);
+    (.treedb.instances // {})
+    | to_entries
+    | map(select(app_wal_dir == $app_wal_dir))
+    | if length > 0 then .[0].value else {} end
+  ' "${debug_vars_file}" > "${out_file}" 2>/dev/null || printf '{}\n' > "${out_file}"
+}
+
 capture_dwell_sample() {
   local sample_idx="$1"
   local dwell_dir="$2"
@@ -1249,12 +1266,7 @@ capture_dwell_sample() {
   curl -fsS --max-time 5 "${PPROF_HTTP_URL}/debug/vars" > "${debug_vars_file}" 2>/dev/null || printf '{}\n' > "${debug_vars_file}"
 
   treedb_app_file="${dwell_dir}/treedb_app_${sample_idx}.json"
-  jq '
-    (.treedb.instances // {})
-    | to_entries
-    | map(select(.key | endswith("/data/application.db/maindb/wal")))
-    | if length > 0 then .[0].value else {} end
-  ' "${debug_vars_file}" > "${treedb_app_file}" 2>/dev/null || printf '{}\n' > "${treedb_app_file}"
+  write_treedb_app_vars "${debug_vars_file}" "${treedb_app_file}" "${app_db}/maindb/wal"
 
   rss_kb=0
   hwm_kb=0
@@ -1439,24 +1451,50 @@ PY
       curl -fsS --max-time 5 "${PPROF_HTTP_URL}/debug/vars" > "${debug_vars_file}" 2>/dev/null || true
       if [ -s "${debug_vars_file}" ]; then
         jq '.treedb // {}' "${debug_vars_file}" > "${treedb_vars_file}" 2>/dev/null || true
-        jq '
-          (.treedb.instances // {})
-          | to_entries
-          | map(select(.key | endswith("/data/application.db/maindb/wal")))
-          | if length > 0 then .[0].value else {} end
-        ' "${debug_vars_file}" > "${treedb_app_vars_file}" 2>/dev/null || true
+        write_treedb_app_vars "${debug_vars_file}" "${treedb_app_vars_file}" "${HOME_DIR}/data/application.db/maindb/wal"
         if [ -s "${treedb_app_vars_file}" ]; then
           jq -r '
             [
+              "treedb.process.identity.wal_dir",
               "treedb.expvar.wal_dir",
               "treedb.process.memory.rss_bytes",
               "treedb.process.memory.heap_inuse_bytes",
+              "treedb.cache.vlog_mmap.active_bytes",
+              "treedb.cache.vlog_mmap.current_bytes",
+              "treedb.cache.vlog_mmap.sealed_bytes",
+              "treedb.cache.vlog_mmap.dead_bytes",
+              "treedb.cache.vlog_mmap.dead_mappings",
+              "treedb.cache.vlog_mmap.remaps",
               "treedb.vlog.mmap_active_bytes",
               "treedb.vlog.mmap_current_bytes",
               "treedb.vlog.mmap_sealed_bytes",
               "treedb.vlog.mmap_dead_bytes",
               "treedb.vlog.mmap_dead_mappings",
-              "treedb.vlog.mmap_remaps"
+              "treedb.vlog.mmap_remaps",
+              "treedb.cache.vlog_generation.bytes.total.total",
+              "treedb.cache.vlog_generation.bytes.live.total",
+              "treedb.cache.vlog_generation.bytes.stale.total",
+              "treedb.cache.vlog_generation.rewrite.queue_len",
+              "treedb.cache.vlog_generation.rewrite.ledger_bytes_total",
+              "treedb.cache.vlog_generation.rewrite.reclaimed_bytes",
+              "treedb.cache.vlog_generation.gc.deleted_bytes",
+              "treedb.cache.vlog_generation.gc.deleted_segments",
+              "treedb.cache.vlog_generation.gc.last_eligible_bytes",
+              "treedb.cache.vlog_generation.gc.last_pending_bytes",
+              "treedb.cache.vlog_generation.gc.last_protected_retained_bytes",
+              "treedb.cache.vlog_generation.leaf_pack.gc.runs",
+              "treedb.cache.vlog_generation.leaf_pack.gc.deleted_bytes",
+              "treedb.cache.vlog_generation.leaf_pack.gc.deleted_files",
+              "treedb.cache.vlog_generation.leaf_pack.gc.deleted_generations",
+              "treedb.cache.vlog_generation.leaf_pack.gc.eligible_generations",
+              "treedb.cache.vlog_generation.observed_gc.source_bytes_total",
+              "treedb.cache.vlog_generation.observed_gc.source_bytes_deleted_total",
+              "treedb.cache.vlog_retained_segments",
+              "treedb.cache.vlog_retained_bytes_estimate",
+              "treedb.cache.vlog_retained_prune.closed_bytes",
+              "treedb.cache.vlog_retained_prune.removed_bytes",
+              "treedb.cache.vlog_zombie.bytes",
+              "treedb.cache.vlog_zombie.pinned_bytes"
             ][] as $k
             | "\($k)=\(.[ $k ] // "")"
           ' "${treedb_app_vars_file}" > "${treedb_app_summary_file}" 2>/dev/null || true
