@@ -449,7 +449,7 @@ replace (
 	github.com/cometbft/cometbft => github.com/celestiaorg/celestia-core v0.39.30
 	github.com/cosmos/cosmos-sdk => github.com/celestiaorg/cosmos-sdk v0.52.6
 	// TreeDB/Celestia: reuse IAVL node reads through GetAppend.
-	github.com/cosmos/iavl => github.com/snissn/iavl v0.0.0-20260627135154-7f09d963873d
+	github.com/cosmos/iavl => github.com/snissn/iavl v0.0.0-20260627182959-0b76f9275487
 	github.com/cosmos/ibc-go/v8 => github.com/celestiaorg/ibc-go/v8 v8.7.2
 	// Use ledger-cosmos-go v0.16.0 because v0.15.0 causes "hidapi: unknown failure"
 	// See https://github.com/celestiaorg/celestia-app/issues/5453
