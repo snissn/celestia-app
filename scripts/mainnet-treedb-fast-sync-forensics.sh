@@ -170,6 +170,10 @@ ERROR_PATTERNS='valuelog: corrupt record|state sync failed|state sync aborted|fa
 CAPTURE_HEAP_ON_MAX_RSS="${CAPTURE_HEAP_ON_MAX_RSS:-1}"
 # Capture heap once RSS climbs by at least this many KiB (default: 2 GiB).
 HEAP_CAPTURE_RSS_DELTA_KB="${HEAP_CAPTURE_RSS_DELTA_KB:-2097152}"
+# Capture heap once process VmHWM climbs by at least this many KiB (default: 1 GiB).
+# This catches transient high-water spikes that can drop before the final
+# max-RSS fallback snapshot runs.
+HEAP_CAPTURE_HWM_DELTA_KB="${HEAP_CAPTURE_HWM_DELTA_KB:-1048576}"
 HEAP_CAPTURE_MAX_FILES="${HEAP_CAPTURE_MAX_FILES:-16}"
 CAPTURE_FULL_SMAPS_ON_MAX_RSS="${CAPTURE_FULL_SMAPS_ON_MAX_RSS:-1}"
 CAPTURE_DEBUG_VARS_ON_MAX_RSS="${CAPTURE_DEBUG_VARS_ON_MAX_RSS:-1}"
@@ -1324,6 +1328,7 @@ LAST_APP_GROWTH_EPOCH="${START_EPOCH}"
 MAX_RSS_KB=0
 MAX_HWM_KB=0
 LAST_HEAP_CAPTURE_RSS_KB=0
+LAST_HEAP_CAPTURE_HWM_KB=0
 HEAP_CAPTURE_COUNT=0
 {
   echo "start_utc=${START_TS}"
@@ -1349,6 +1354,9 @@ HEAP_CAPTURE_COUNT=0
   echo "stop_at_local_height=${STOP_AT_LOCAL_HEIGHT:-disabled}"
   echo "post_sync_dwell_seconds=${POST_SYNC_DWELL_SECONDS}"
   echo "zero_local_fail_seconds=${ZERO_LOCAL_FAIL_SECONDS}"
+  echo "heap_capture_rss_delta_kb=${HEAP_CAPTURE_RSS_DELTA_KB}"
+  echo "heap_capture_hwm_delta_kb=${HEAP_CAPTURE_HWM_DELTA_KB}"
+  echo "heap_capture_max_files=${HEAP_CAPTURE_MAX_FILES}"
   echo "start_home_bytes=${START_HOME_BYTES}"
   echo "start_data_bytes=${START_DATA_BYTES}"
   echo "start_app_bytes=${START_APP_BYTES}"
@@ -1368,6 +1376,7 @@ NODE_PID=""
 capture_heap_profile() {
   local reason="$1"
   local rss_kb="${2:-}"
+  local hwm_kb="${3:-}"
   if [ "${CAPTURE_HEAP_ON_MAX_RSS}" != "1" ]; then
     return 0
   fi
@@ -1389,6 +1398,12 @@ capture_heap_profile() {
 
   local ts
   ts="$(date +%Y%m%d%H%M%S)"
+  local current_rss_kb=""
+  local current_hwm_kb=""
+  if [ -r "/proc/${NODE_PID}/status" ]; then
+    current_rss_kb="$(awk '/VmRSS:/ {print $2}' "/proc/${NODE_PID}/status" 2>/dev/null || true)"
+    current_hwm_kb="$(awk '/VmHWM:/ {print $2}' "/proc/${NODE_PID}/status" 2>/dev/null || true)"
+  fi
   local heap_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.pprof"
   local top_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.top.txt"
   local smaps_rollup_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.smaps_rollup.txt"
@@ -1398,6 +1413,19 @@ capture_heap_profile() {
   local treedb_vars_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.treedb_vars.json"
   local treedb_app_vars_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.treedb_application_vars.json"
   local treedb_app_summary_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.treedb_application_summary.txt"
+  local metadata_file="${DIAG_DIR}/pprof-heap-${reason}-${rss_kb}k-${ts}.capture_metadata.txt"
+
+  {
+    echo "reason=${reason}"
+    echo "requested_rss_kb=${rss_kb:-}"
+    echo "requested_hwm_kb=${hwm_kb:-}"
+    echo "current_rss_kb=${current_rss_kb:-}"
+    echo "current_hwm_kb=${current_hwm_kb:-}"
+    echo "observed_max_rss_kb=${MAX_RSS_KB}"
+    echo "observed_max_hwm_kb=${MAX_HWM_KB}"
+    echo "capture_count_before=${HEAP_CAPTURE_COUNT}"
+    echo "captured_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "${metadata_file}" 2>/dev/null || true
 
   curl -fsS --max-time 20 "${PPROF_HTTP_URL}/debug/pprof/heap" > "${heap_file}" 2>/dev/null || true
   if [ -s "${heap_file}" ]; then
@@ -1502,8 +1530,38 @@ PY
       fi
     fi
     HEAP_CAPTURE_COUNT=$((HEAP_CAPTURE_COUNT + 1))
+    {
+      echo "capture_count_after=${HEAP_CAPTURE_COUNT}"
+      echo "heap_file=${heap_file}"
+      echo "heap_top_file=${top_file}"
+      echo "smaps_rollup_file=${smaps_rollup_file}"
+      echo "smaps_file=${smaps_file}"
+      echo "smaps_top_file=${smaps_top_file}"
+      echo "debug_vars_file=${debug_vars_file}"
+      echo "treedb_vars_file=${treedb_vars_file}"
+      echo "treedb_application_vars_file=${treedb_app_vars_file}"
+      echo "treedb_application_summary_file=${treedb_app_summary_file}"
+    } >> "${metadata_file}" 2>/dev/null || true
   else
     rm -f "${heap_file}" 2>/dev/null || true
+  fi
+}
+
+mark_heap_capture_watermarks_if_captured() {
+  local capture_count_before="$1"
+  local rss_kb="${2:-}"
+  local hwm_kb="${3:-}"
+  if ! is_non_negative_int "${capture_count_before}"; then
+    return 0
+  fi
+  if [ "${HEAP_CAPTURE_COUNT}" -le "${capture_count_before}" ]; then
+    return 0
+  fi
+  if is_non_negative_int "${rss_kb}"; then
+    LAST_HEAP_CAPTURE_RSS_KB="${rss_kb}"
+  fi
+  if is_non_negative_int "${hwm_kb}"; then
+    LAST_HEAP_CAPTURE_HWM_KB="${hwm_kb}"
   fi
 }
 
@@ -1996,20 +2054,31 @@ while true; do
   else
     HWM_KB=""
   fi
-  if [ -n "${RSS_KB}" ] && [ "${RSS_KB}" -gt "${MAX_RSS_KB}" ]; then
+  if is_non_negative_int "${RSS_KB}" && [ "${RSS_KB}" -gt "${MAX_RSS_KB}" ]; then
     MAX_RSS_KB="${RSS_KB}"
     if is_non_negative_int "${HEAP_CAPTURE_RSS_DELTA_KB}" && [ "${HEAP_CAPTURE_RSS_DELTA_KB}" -gt 0 ]; then
       if [ -z "${LAST_HEAP_CAPTURE_RSS_KB}" ] || ! is_non_negative_int "${LAST_HEAP_CAPTURE_RSS_KB}"; then
         LAST_HEAP_CAPTURE_RSS_KB=0
       fi
       if [ $((RSS_KB - LAST_HEAP_CAPTURE_RSS_KB)) -ge "${HEAP_CAPTURE_RSS_DELTA_KB}" ]; then
-        capture_heap_profile "max-rss" "${RSS_KB}"
-        LAST_HEAP_CAPTURE_RSS_KB="${RSS_KB}"
+        capture_count_before="${HEAP_CAPTURE_COUNT}"
+        capture_heap_profile "max-rss" "${RSS_KB}" "${HWM_KB:-}"
+        mark_heap_capture_watermarks_if_captured "${capture_count_before}" "${RSS_KB}" "${HWM_KB:-}"
       fi
     fi
   fi
-  if [ -n "${HWM_KB}" ] && [ "${HWM_KB}" -gt "${MAX_HWM_KB}" ]; then
+  if is_non_negative_int "${HWM_KB}" && [ "${HWM_KB}" -gt "${MAX_HWM_KB}" ]; then
     MAX_HWM_KB="${HWM_KB}"
+    if is_non_negative_int "${HEAP_CAPTURE_HWM_DELTA_KB}" && [ "${HEAP_CAPTURE_HWM_DELTA_KB}" -gt 0 ]; then
+      if [ -z "${LAST_HEAP_CAPTURE_HWM_KB}" ] || ! is_non_negative_int "${LAST_HEAP_CAPTURE_HWM_KB}"; then
+        LAST_HEAP_CAPTURE_HWM_KB=0
+      fi
+      if [ $((HWM_KB - LAST_HEAP_CAPTURE_HWM_KB)) -ge "${HEAP_CAPTURE_HWM_DELTA_KB}" ]; then
+        capture_count_before="${HEAP_CAPTURE_COUNT}"
+        capture_heap_profile "max-hwm" "${RSS_KB:-}" "${HWM_KB}"
+        mark_heap_capture_watermarks_if_captured "${capture_count_before}" "${RSS_KB:-}" "${HWM_KB}"
+      fi
+    fi
   fi
 
   LAG=$((REMOTE_HEIGHT - LOCAL_HEIGHT))
@@ -2179,20 +2248,31 @@ if is_non_negative_int "${POST_SYNC_DWELL_SECONDS}" && [ "${POST_SYNC_DWELL_SECO
     else
       HWM_KB=""
     fi
-    if [ -n "${RSS_KB}" ] && [ "${RSS_KB}" -gt "${MAX_RSS_KB}" ]; then
+    if is_non_negative_int "${RSS_KB}" && [ "${RSS_KB}" -gt "${MAX_RSS_KB}" ]; then
       MAX_RSS_KB="${RSS_KB}"
       if is_non_negative_int "${HEAP_CAPTURE_RSS_DELTA_KB}" && [ "${HEAP_CAPTURE_RSS_DELTA_KB}" -gt 0 ]; then
         if [ -z "${LAST_HEAP_CAPTURE_RSS_KB}" ] || ! is_non_negative_int "${LAST_HEAP_CAPTURE_RSS_KB}"; then
           LAST_HEAP_CAPTURE_RSS_KB=0
         fi
         if [ $((RSS_KB - LAST_HEAP_CAPTURE_RSS_KB)) -ge "${HEAP_CAPTURE_RSS_DELTA_KB}" ]; then
-          capture_heap_profile "post-sync-dwell" "${RSS_KB}"
-          LAST_HEAP_CAPTURE_RSS_KB="${RSS_KB}"
+          capture_count_before="${HEAP_CAPTURE_COUNT}"
+          capture_heap_profile "post-sync-dwell-rss" "${RSS_KB}" "${HWM_KB:-}"
+          mark_heap_capture_watermarks_if_captured "${capture_count_before}" "${RSS_KB}" "${HWM_KB:-}"
         fi
       fi
     fi
-    if [ -n "${HWM_KB}" ] && [ "${HWM_KB}" -gt "${MAX_HWM_KB}" ]; then
+    if is_non_negative_int "${HWM_KB}" && [ "${HWM_KB}" -gt "${MAX_HWM_KB}" ]; then
       MAX_HWM_KB="${HWM_KB}"
+      if is_non_negative_int "${HEAP_CAPTURE_HWM_DELTA_KB}" && [ "${HEAP_CAPTURE_HWM_DELTA_KB}" -gt 0 ]; then
+        if [ -z "${LAST_HEAP_CAPTURE_HWM_KB}" ] || ! is_non_negative_int "${LAST_HEAP_CAPTURE_HWM_KB}"; then
+          LAST_HEAP_CAPTURE_HWM_KB=0
+        fi
+        if [ $((HWM_KB - LAST_HEAP_CAPTURE_HWM_KB)) -ge "${HEAP_CAPTURE_HWM_DELTA_KB}" ]; then
+          capture_count_before="${HEAP_CAPTURE_COUNT}"
+          capture_heap_profile "post-sync-dwell-hwm" "${RSS_KB:-}" "${HWM_KB}"
+          mark_heap_capture_watermarks_if_captured "${capture_count_before}" "${RSS_KB:-}" "${HWM_KB}"
+        fi
+      fi
     fi
 
     if [ "${NOW_EPOCH}" -ge "${NEXT_DWELL_SAMPLE_EPOCH}" ]; then
@@ -2216,10 +2296,19 @@ fi
 # Ensure we always preserve at least one heap/smaps snapshot near the true
 # observed peak, even when intermediate delta-trigger captures missed the final
 # crest.
+NEEDS_FINAL_HEAP_CAPTURE=0
 if is_non_negative_int "${MAX_RSS_KB}" && is_non_negative_int "${LAST_HEAP_CAPTURE_RSS_KB}" \
   && [ "${MAX_RSS_KB}" -gt 0 ] && [ "${MAX_RSS_KB}" -gt "${LAST_HEAP_CAPTURE_RSS_KB}" ]; then
-  capture_heap_profile "max-rss-final" "${MAX_RSS_KB}"
-  LAST_HEAP_CAPTURE_RSS_KB="${MAX_RSS_KB}"
+  NEEDS_FINAL_HEAP_CAPTURE=1
+fi
+if is_non_negative_int "${MAX_HWM_KB}" && is_non_negative_int "${LAST_HEAP_CAPTURE_HWM_KB}" \
+  && [ "${MAX_HWM_KB}" -gt 0 ] && [ "${MAX_HWM_KB}" -gt "${LAST_HEAP_CAPTURE_HWM_KB}" ]; then
+  NEEDS_FINAL_HEAP_CAPTURE=1
+fi
+if [ "${NEEDS_FINAL_HEAP_CAPTURE}" = "1" ]; then
+  capture_count_before="${HEAP_CAPTURE_COUNT}"
+  capture_heap_profile "max-memory-final" "${MAX_RSS_KB}" "${MAX_HWM_KB}"
+  mark_heap_capture_watermarks_if_captured "${capture_count_before}" "${MAX_RSS_KB}" "${MAX_HWM_KB}"
 fi
 
 END_EPOCH="$(date +%s)"
@@ -2247,6 +2336,7 @@ END_BLOCKSTORE_BYTES="$(safe_du_bytes "${HOME_DIR}/data/blockstore.db")"
   echo "max_hwm_kb=${MAX_HWM_KB}"
   echo "heap_capture_count=${HEAP_CAPTURE_COUNT}"
   echo "last_heap_capture_rss_kb=${LAST_HEAP_CAPTURE_RSS_KB}"
+  echo "last_heap_capture_hwm_kb=${LAST_HEAP_CAPTURE_HWM_KB}"
   echo "end_home_bytes=${END_HOME_BYTES}"
   echo "end_data_bytes=${END_DATA_BYTES}"
   echo "end_app_bytes=${END_APP_BYTES}"
