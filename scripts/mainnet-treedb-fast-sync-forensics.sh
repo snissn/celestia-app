@@ -153,9 +153,13 @@ PPROF_HTTP_URL="http://${PPROF_LADDR}"
 #   observed at the start of monitoring (ignores subsequent remote growth).
 # - MAX_REMOTE_HEIGHT=<n>: clamp the remote height used for completion/lag to <= n.
 # - STOP_AT_LOCAL_HEIGHT=<n>: stop once local height reaches this explicit target.
+# - REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT=<n>: fail the run if the accepted
+#   state-sync snapshot height differs. This makes TreeDB-vs-LevelDB A/B runs
+#   reject mismatched snapshots instead of silently producing directional data.
 FREEZE_REMOTE_HEIGHT_AT_START="${FREEZE_REMOTE_HEIGHT_AT_START:-0}"
 MAX_REMOTE_HEIGHT="${MAX_REMOTE_HEIGHT:-}"
 STOP_AT_LOCAL_HEIGHT="${STOP_AT_LOCAL_HEIGHT:-}"
+REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT="${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT:-${EXPECTED_ACCEPTED_SNAPSHOT_HEIGHT:-}}"
 # In clamped-target mode (freeze/max remote), allow completion once local height
 # reaches the computed target even if status still reports catching_up=true.
 # This avoids processing extra tip blocks beyond the requested comparison target.
@@ -1001,6 +1005,10 @@ if [ -n "${STOP_AT_LOCAL_HEIGHT}" ] && ! is_non_negative_int "${STOP_AT_LOCAL_HE
   log_error "STOP_AT_LOCAL_HEIGHT must be a non-negative integer when set (got: ${STOP_AT_LOCAL_HEIGHT})."
   exit 1
 fi
+if [ -n "${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT}" ] && ! is_non_negative_int "${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT}"; then
+  log_error "REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT must be a non-negative integer when set (got: ${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT})."
+  exit 1
+fi
 if ! is_non_negative_int "${ZERO_LOCAL_FAIL_SECONDS}"; then
   log_error "ZERO_LOCAL_FAIL_SECONDS must be a non-negative integer (got: ${ZERO_LOCAL_FAIL_SECONDS})."
   exit 1
@@ -1352,6 +1360,7 @@ HEAP_CAPTURE_COUNT=0
   echo "bootstrap_fallback_home=${fallback_home:-disabled}"
   echo "bootstrap_full_home_seeded=${BOOTSTRAP_FULL_HOME_SEEDED}"
   echo "stop_at_local_height=${STOP_AT_LOCAL_HEIGHT:-disabled}"
+  echo "required_accepted_snapshot_height=${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT:-disabled}"
   echo "post_sync_dwell_seconds=${POST_SYNC_DWELL_SECONDS}"
   echo "zero_local_fail_seconds=${ZERO_LOCAL_FAIL_SECONDS}"
   echo "heap_capture_rss_delta_kb=${HEAP_CAPTURE_RSS_DELTA_KB}"
@@ -1630,6 +1639,61 @@ fail_and_exit() {
   fi
   print_recent_log_excerpt
   exit 1
+}
+
+record_accepted_snapshot_height() {
+  local height="$1"
+  local source="$2"
+  local marker="${3:-}"
+  local format=""
+  local hash=""
+
+  if ! is_non_negative_int "${height}"; then
+    return 0
+  fi
+
+  if [[ "${marker}" =~ format=([^[:space:]]+) ]]; then
+    format="${BASH_REMATCH[1]}"
+  fi
+  if [[ "${marker}" =~ hash=([^[:space:]]+) ]]; then
+    hash="${BASH_REMATCH[1]}"
+  fi
+
+  if [ -n "${ACCEPTED_SNAPSHOT_HEIGHT}" ]; then
+    if [ "${height}" != "${ACCEPTED_SNAPSHOT_HEIGHT}" ]; then
+      {
+        echo "accepted_snapshot_mismatch=true"
+        echo "accepted_snapshot_mismatch_height=${height}"
+        echo "accepted_snapshot_mismatch_source=${source}"
+        echo "accepted_snapshot_mismatch_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      } >> "${TIME_LOG}" 2>/dev/null || true
+      fail_and_exit "State-sync snapshot height changed during run: first=${ACCEPTED_SNAPSHOT_HEIGHT} later=${height} source=${source}."
+    fi
+    return 0
+  fi
+
+  ACCEPTED_SNAPSHOT_HEIGHT="${height}"
+  ACCEPTED_SNAPSHOT_SOURCE="${source}"
+  ACCEPTED_SNAPSHOT_FORMAT="${format}"
+  ACCEPTED_SNAPSHOT_HASH="${hash}"
+  {
+    echo "accepted_snapshot_height=${ACCEPTED_SNAPSHOT_HEIGHT}"
+    echo "accepted_snapshot_source=${ACCEPTED_SNAPSHOT_SOURCE}"
+    echo "accepted_snapshot_format=${ACCEPTED_SNAPSHOT_FORMAT:-unknown}"
+    echo "accepted_snapshot_hash=${ACCEPTED_SNAPSHOT_HASH:-unknown}"
+    echo "accepted_snapshot_observed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >> "${TIME_LOG}" 2>/dev/null || true
+  log_info "Accepted state-sync snapshot height=${ACCEPTED_SNAPSHOT_HEIGHT} source=${ACCEPTED_SNAPSHOT_SOURCE} required=${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT:-disabled}"
+
+  if [ -n "${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT}" ] && [ "${ACCEPTED_SNAPSHOT_HEIGHT}" != "${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT}" ]; then
+    {
+      echo "accepted_snapshot_mismatch=true"
+      echo "accepted_snapshot_required_height=${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT}"
+      echo "accepted_snapshot_actual_height=${ACCEPTED_SNAPSHOT_HEIGHT}"
+      echo "accepted_snapshot_mismatch_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } >> "${TIME_LOG}" 2>/dev/null || true
+    fail_and_exit "Accepted state-sync snapshot height ${ACCEPTED_SNAPSHOT_HEIGHT} does not match REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT=${REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT}."
+  fi
 }
 
 assert_treedb_outer_leaf_mode() {
@@ -1945,6 +2009,10 @@ SYNC_COMPLETE=0
 ACTIVE_RESTORE_GRACE_USED=0
 STATESYNC_PPROF_CAPTURED=0
 ZERO_LOCAL_SINCE_EPOCH=0
+ACCEPTED_SNAPSHOT_HEIGHT=""
+ACCEPTED_SNAPSHOT_SOURCE=""
+ACCEPTED_SNAPSHOT_FORMAT=""
+ACCEPTED_SNAPSHOT_HASH=""
 
 log_info "Monitoring sync progress..."
 while true; do
@@ -2118,6 +2186,9 @@ while true; do
   if [ -n "${SYNC_MARKER}" ] && [ "${SYNC_MARKER}" != "${LAST_SYNC_MARKER}" ]; then
     LAST_SYNC_MARKER="${SYNC_MARKER}"
     PROGRESS_EPOCH="${NOW_EPOCH}"
+    if [[ "${SYNC_MARKER}" == *"Snapshot accepted, restoring"* ]] && [[ "${SYNC_MARKER}" =~ height=([0-9]+) ]]; then
+      record_accepted_snapshot_height "${BASH_REMATCH[1]}" "statesync_accepted" "${SYNC_MARKER}"
+    fi
     if [[ "${SYNC_MARKER}" =~ chunk=([0-9]+) ]]; then
       CHUNK_NUM="${BASH_REMATCH[1]}"
       CHUNK_TOTAL="?"
@@ -2129,6 +2200,7 @@ while true; do
         SNAPSHOT_HEIGHT="${BASH_REMATCH[1]}"
       fi
       log_info "State-sync activity: snapshot_height=${SNAPSHOT_HEIGHT} chunk=${CHUNK_NUM}/${CHUNK_TOTAL} local=${LOCAL_HEIGHT}"
+      record_accepted_snapshot_height "${SNAPSHOT_HEIGHT}" "statesync_chunk" "${SYNC_MARKER}"
 
       if [ "${STATESYNC_PPROF_CAPTURED}" -eq 0 ] \
         && is_positive_int "${CAPTURE_PPROF_ON_STATESYNC_CHUNK:-}" \
@@ -2332,6 +2404,10 @@ END_BLOCKSTORE_BYTES="$(safe_du_bytes "${HOME_DIR}/data/blockstore.db")"
   if [ -n "${REMOTE_HEIGHT_ACTUAL}" ]; then
     echo "final_remote_height_actual=${REMOTE_HEIGHT_ACTUAL}"
   fi
+  echo "accepted_snapshot_height=${ACCEPTED_SNAPSHOT_HEIGHT:-unknown}"
+  echo "accepted_snapshot_source=${ACCEPTED_SNAPSHOT_SOURCE:-unknown}"
+  echo "accepted_snapshot_format=${ACCEPTED_SNAPSHOT_FORMAT:-unknown}"
+  echo "accepted_snapshot_hash=${ACCEPTED_SNAPSHOT_HASH:-unknown}"
   echo "max_rss_kb=${MAX_RSS_KB}"
   echo "max_hwm_kb=${MAX_HWM_KB}"
   echo "heap_capture_count=${HEAP_CAPTURE_COUNT}"

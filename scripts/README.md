@@ -30,3 +30,15 @@ In subsequent commands, pass the `--home $CELESTIA_APP_HOME` flag:
 ```
 
 Note: this script is used in <https://github.com/celestiaorg/docs> so please update the docs repo if you make breaking changes to this script.
+
+## mainnet-treedb-fast-sync-forensics.sh
+
+This runner records TreeDB/LevelDB state-sync and dwell evidence under
+`$HOME/.celestia-app-mainnet-<backend>-<timestamp>/sync`.
+
+For strict TreeDB-vs-LevelDB A/B runs, set
+`REQUIRED_ACCEPTED_SNAPSHOT_HEIGHT=<height>` after one side has selected the
+snapshot height. The runner records `accepted_snapshot_height` in
+`sync-time.log` and fails closed if the accepted state-sync snapshot does not
+match the required value. This prevents mismatched snapshots from being treated
+as clean comparisons.
