@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -196,6 +197,39 @@ type NoopAppOptions struct{}
 
 func (nao NoopAppOptions) Get(string) any {
 	return nil
+}
+
+type mapAppOptions map[string]any
+
+func (mao mapAppOptions) Get(key string) any {
+	return mao[key]
+}
+
+func TestNewRegistersStreamingServices(t *testing.T) {
+	logger := log.NewNopLogger()
+	db := tmdb.NewMemDB()
+	traceStore := &NoopWriter{}
+	timeoutCommit := time.Second
+	pluginKey := fmt.Sprintf(
+		"%s.%s.%s",
+		baseapp.StreamingTomlKey,
+		baseapp.StreamingABCITomlKey,
+		baseapp.StreamingABCIPluginTomlKey,
+	)
+	appOptions := mapAppOptions{
+		baseapp.StreamingTomlKey: map[string]any{
+			baseapp.StreamingABCITomlKey: map[string]any{},
+		},
+		pluginKey: "/definitely/not/a/streaming-plugin",
+	}
+
+	defer func() {
+		recovered := recover()
+		require.NotNil(t, recovered, "expected configured streaming plugin to be registered")
+		require.Contains(t, fmt.Sprint(recovered), "failed to register streaming services")
+	}()
+
+	_ = app.New(logger, db, traceStore, timeoutCommit, appOptions)
 }
 
 func getTestApp() *app.App {
