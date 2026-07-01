@@ -234,6 +234,10 @@ func New(
 	tkeys := storetypes.NewTransientStoreKeys(paramstypes.TStoreKey)
 	memKeys := storetypes.NewMemoryStoreKeys(capabilitytypes.MemStoreKey)
 
+	if err := baseApp.RegisterStreamingServices(appOpts, keys); err != nil {
+		panic(fmt.Errorf("failed to register streaming services: %w", err))
+	}
+
 	govModuleAddr := authtypes.NewModuleAddress(govtypes.ModuleName).String()
 
 	if delayedPrecommitTimeout == 0 {
