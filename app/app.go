@@ -234,6 +234,9 @@ func New(
 	tkeys := storetypes.NewTransientStoreKeys(paramstypes.TStoreKey)
 	memKeys := storetypes.NewMemoryStoreKeys(capabilitytypes.MemStoreKey)
 
+	if err := registerOrderedRootProbe(baseApp, appOpts, keys); err != nil {
+		panic(fmt.Errorf("failed to register ordered-root probe: %w", err))
+	}
 	if err := baseApp.RegisterStreamingServices(appOpts, keys); err != nil {
 		panic(fmt.Errorf("failed to register streaming services: %w", err))
 	}
